@@ -135,7 +135,7 @@ installTorrServer() {
     binName="TorrServer-linux-arm64"
     [ ! -d "$dirInstall" ] && mkdir -p "$dirInstall"
     
-    urlBin="https://github.com/YouROK/TorrServer/releases/download/MatriX.136/TorrServer-linux-arm64"
+    urlBin="https://github.com/YouROK/TorrServer/releases/download/MatriX.137/TorrServer-linux-arm64"
     
     echo " Загружаем TorrServer..."
     curl -L -o "$dirInstall/$binName" "$urlBin"
@@ -222,7 +222,7 @@ checkInstalled() {
 
 UpdateVersion() {
     /etc/init.d/$serviceName stop
-    curl -L -o "$dirInstall/TorrServer-linux-arm64" "https://github.com/YouROK/TorrServer/releases/download/MatriX.136/TorrServer-linux-arm64"
+    curl -L -o "$dirInstall/TorrServer-linux-arm64" "https://github.com/YouROK/TorrServer/releases/download/MatriX.137/TorrServer-linux-arm64"
     chmod +x "$dirInstall/TorrServer-linux-arm64"
     /etc/init.d/$serviceName start
     echo " - TorrServer обновлен!"
