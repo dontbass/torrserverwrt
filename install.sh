@@ -199,6 +199,22 @@ uninstall() {
     fi
 }
 
+getAuthCredentials() {
+    # Читаем логин и пароль из accs.db (формат: { "user": "pass" })
+    local accsFile="$dirInstall/accs.db"
+    if [ ! -f "$accsFile" ]; then
+        echo ""
+        return
+    fi
+    # Извлекаем первую пару ключ:значение из JSON
+    local user pass
+    user=$(grep -o '"[^"]*":' "$accsFile" | head -1 | tr -d '":' | tr -d ' ')
+    pass=$(grep -o ': *"[^"]*"' "$accsFile" | head -1 | sed 's/: *"//;s/"//')
+    if [ -n "$user" ] && [ -n "$pass" ]; then
+        printf "%s:%s" "$user" "$pass"
+    fi
+}
+
 showStatus() {
     printf "\n"
     printf "=============================================================\n"
@@ -206,7 +222,7 @@ showStatus() {
     printf "=============================================================\n"
 
     if ! checkInstalled; then
-        printf " Состояние: $(colorize red НЕ УСТАНОВЛЕН)\n"
+        printf " Состояние:  $(colorize red НЕ УСТАНОВЛЕН)\n"
         printf "\n"
         return
     fi
@@ -219,47 +235,63 @@ showStatus() {
     [ -z "$port" ] && port="8090"
     [ -z "$ip" ]   && ip="<неизвестен>"
 
-    printf " Версия:    $(colorize cyan "%s")\n" "$version"
-    printf " Бинарь:    TorrServer-%s\n" "$arch"
+    printf " Версия:     $(colorize cyan "%s")\n" "$version"
+    printf " Бинарь:     TorrServer-%s\n" "$arch"
 
     if isRunning; then
-        printf " Служба:    $(colorize green ЗАПУЩЕНА)\n"
-        printf " Адрес:     $(colorize green "http://%s:%s")\n" "$ip" "$port"
+        printf " Служба:     $(colorize green ЗАПУЩЕНА)\n"
+        printf " Адрес:      $(colorize green "http://%s:%s")\n" "$ip" "$port"
         # uptime процесса через /proc
         local pid
         pid=$(pidof "TorrServer-${arch}" 2>/dev/null | awk '{print $1}')
         if [ -n "$pid" ] && [ -f "/proc/$pid/stat" ]; then
-            local ticks uptime_sec
+            local ticks uptime_sec hz start_sec running_sec h m s
             ticks=$(awk '{print $22}' /proc/$pid/stat 2>/dev/null)
             uptime_sec=$(awk '{print int($1)}' /proc/uptime 2>/dev/null)
             hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
             if [ -n "$ticks" ] && [ -n "$uptime_sec" ]; then
-                local start_sec running_sec
                 start_sec=$((ticks / hz))
                 running_sec=$((uptime_sec - start_sec))
-                if [ $running_sec -gt 0 ]; then
-                    local h m s
+                if [ "$running_sec" -gt 0 ] 2>/dev/null; then
                     h=$((running_sec / 3600))
                     m=$(((running_sec % 3600) / 60))
                     s=$((running_sec % 60))
-                    printf " Uptime:    %dч %dм %dс\n" "$h" "$m" "$s"
+                    printf " Uptime:     %dч %dм %dс\n" "$h" "$m" "$s"
                 fi
             fi
         fi
     else
-        printf " Служба:    $(colorize red ОСТАНОВЛЕНА)\n"
+        printf " Служба:     $(colorize red ОСТАНОВЛЕНА)\n"
+        printf " Адрес:      http://%s:%s\n" "$ip" "$port"
+    fi
+
+    # Авторизация
+    local creds
+    creds=$(getAuthCredentials)
+    if [ -n "$creds" ]; then
+        local authUser authPass
+        authUser="${creds%%:*}"
+        authPass="${authPass="${creds#*:}"}"
+        printf " Авториз.:   $(colorize yellow ВКЛ)\n"
+        printf " Логин:      %s\n" "$authUser"
+        printf " Пароль:     %s\n" "$authPass"
+    else
+        printf " Авториз.:   $(colorize cyan ВЫКЛ)\n"
     fi
 
     # Проверяем наличие обновления
-    printf " Проверяем обновления...\n"
+    printf " Обновление: "
     local latest
     latest=$(getLatestRelease)
     if [ -n "$latest" ] && [ "$latest" != "$version" ]; then
-        printf " Обновление: $(colorize yellow "доступно %s")\n" "$latest"
+        printf "$(colorize yellow "доступно %s")\n" "$latest"
     elif [ -n "$latest" ]; then
-        printf " Обновление: $(colorize green "не требуется")\n"
+        printf "$(colorize green "не требуется")\n"
+    else
+        printf "не удалось проверить\n"
     fi
 
+    printf "=============================================================\n"
     printf "\n"
 }
 
