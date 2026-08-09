@@ -494,16 +494,15 @@ setupAutoupdate() {
         return 1
     fi
 
-    local cronFile="/etc/crontabs/root"
-    local cronLine="0 4 * * * sh $(readlink -f "$0") --no-color --auto update >> /var/log/torrserver-update.log 2>&1"
+    # TorrServer обновляется редко (раз в несколько недель), еженедельной проверки достаточно
+    local cronLine="0 4 * * 0 sh $(readlink -f "$0") --no-color --auto update >> /var/log/torrserver-update.log 2>&1"
 
     # Проверяем текущее состояние
     if crontab -l 2>/dev/null | grep -q "torrserver.*update\|update.*torrserver"; then
-        printf " Автообновление уже настроено.\n"
+        printf " Автообновление уже настроено (еженедельно по воскресеньям в 04:00).\n"
         printf " Отключить? (%s/%s) " "$(colorize red Y)es" "$(colorize yellow N)o"
         read -r answer </dev/tty
         if [ "$answer" != "${answer#[YyДд]}" ]; then
-            # Удаляем строку с torrserver update из cron
             local tmpCron="/tmp/cron_torrserver.tmp"
             crontab -l 2>/dev/null | grep -v "torrserver.*update\|update.*torrserver" > "$tmpCron"
             crontab "$tmpCron"
@@ -515,29 +514,49 @@ setupAutoupdate() {
         return 0
     fi
 
-    printf "\n Автообновление будет запускаться каждый день в 04:00\n"
+    printf "\n"
+    printf " Автообновление запускается раз в неделю (воскресенье, 04:00).\n"
+    printf " TorrServer обновляется редко, ежедневная проверка избыточна.\n"
     printf " Лог: /var/log/torrserver-update.log\n"
-    printf " Включить? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
+    printf "\n"
+    printf " $(colorize yellow ВНИМАНИЕ) При обновлении скачивается ~70 МБ.\n"
+    printf " Если на роутере мало места в /opt — не включайте автообновление,\n"
+    printf " обновляйте вручную командой: sh %s -u\n" "$scriptname"
+    printf "\n"
+    printf " Включить автообновление? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
     read -r answer </dev/tty
     if [ "$answer" != "${answer#[YyДд]}" ]; then
-        # Добавляем в cron (mkdir на случай если файла нет)
         mkdir -p /etc/crontabs
         local tmpCron="/tmp/cron_torrserver.tmp"
         crontab -l 2>/dev/null > "$tmpCron"
         printf "%s\n" "$cronLine" >> "$tmpCron"
         crontab "$tmpCron"
         rm -f "$tmpCron"
-        # Убеждаемся что crond запущен
         /etc/init.d/cron enable 2>/dev/null
         /etc/init.d/cron start 2>/dev/null
-        printf " ✓ Автообновление включено (ежедневно в 04:00)\n"
+        printf " ✓ Автообновление включено (еженедельно, воскресенье 04:00)\n"
     else
         printf " Отменено\n"
     fi
 }
 
 installTorrServer() {
-    printf "\n Устанавливаем TorrServer...\n\n"
+    printf "\n"
+    printf "=============================================================\n"
+    printf " Установка TorrServer\n"
+    printf "=============================================================\n"
+    printf "\n"
+    printf " $(colorize yellow "ТРЕБОВАНИЯ К РОУТЕРУ:")\n"
+    printf "  RAM:   минимум 256 МБ, рекомендуется 512 МБ и более\n"
+    printf "  Место: ~70-80 МБ свободно в /opt\n"
+    printf "  CPU:   на MIPS-роутерах (TP-Link, Xiaomi mini и т.п.)\n"
+    printf "         стриминг может тормозить или не работать вовсе.\n"
+    printf "         Уверенно работает на ARM64 (NanoPi, RPi 3/4, MT7981)\n"
+    printf "\n"
+    printf " Продолжить установку? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
+    read -r answer_warn </dev/tty
+    [ "$answer_warn" != "${answer_warn#[YyДд]}" ] || { printf " Установка отменена\n\n"; return 0; }
+    printf "\n"
 
     local arch
     arch=$(detectArch)
@@ -611,6 +630,25 @@ installTorrServer() {
     /etc/init.d/$serviceName start
 
     sleep 2
+
+    # Предложить автообновление
+    printf "\n"
+    printf " Включить автообновление? (раз в неделю, ~70 МБ трафика)\n"
+    printf " $(colorize yellow "Не рекомендуется если в /opt менее 150 МБ свободно.")\n"
+    printf " Включить? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
+    read -r answer_cron </dev/tty
+    if [ "$answer_cron" != "${answer_cron#[YyДд]}" ]; then
+        local cronLine="0 4 * * 0 sh $(readlink -f "$0") --no-color --auto update >> /var/log/torrserver-update.log 2>&1"
+        mkdir -p /etc/crontabs
+        local tmpCron="/tmp/cron_torrserver.tmp"
+        crontab -l 2>/dev/null > "$tmpCron"
+        printf "%s\n" "$cronLine" >> "$tmpCron"
+        crontab "$tmpCron"
+        rm -f "$tmpCron"
+        /etc/init.d/cron enable 2>/dev/null
+        /etc/init.d/cron start 2>/dev/null
+        printf " ✓ Автообновление включено (воскресенье 04:00)\n"
+    fi
 
     local serverIP
     serverIP=$(getIP)
