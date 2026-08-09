@@ -177,13 +177,18 @@ downloadTorrServer() {
     local arch="$2"
     local binName="TorrServer-${arch}"
     local urlBin="https://github.com/YouROK/TorrServer/releases/download/${version}/${binName}"
+    local tmpFile="$dirInstall/${binName}.tmp"
 
     printf " Загружаем TorrServer %s для %s...\n" "$version" "$arch"
-    if ! curl -L --progress-bar -o "$dirInstall/$binName" "$urlBin"; then
+    # Качаем во временный файл — бинарь может быть запущен
+    if ! curl -L --progress-bar -o "$tmpFile" "$urlBin"; then
         printf " - Ошибка загрузки! Проверьте соединение или попробуйте позже.\n"
+        rm -f "$tmpFile"
         return 1
     fi
-    chmod +x "$dirInstall/$binName"
+    chmod +x "$tmpFile"
+    # Атомарная замена: mv работает даже если старый файл занят (unlink + новый inode)
+    mv -f "$tmpFile" "$dirInstall/$binName"
     # Сохраняем версию и имя бинаря
     printf "%s" "$version" > "$dirInstall/version"
     printf "%s" "$binName" > "$dirInstall/binary"
@@ -207,12 +212,14 @@ installTorrServer() {
 
     # Проверка существующей установки
     if [ -f "$dirInstall/TorrServer-${arch}" ]; then
-        printf " TorrServer уже установлен. Хотите обновить? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
+        printf " TorrServer уже установлен (версия: %s).\n" "$(getInstalledVersion)"
+        printf " Хотите обновить до последней версии? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
         read -r answer_up </dev/tty
         if [ "$answer_up" != "${answer_up#[YyДд]}" ]; then
             UpdateVersion
             return
         fi
+        return
     fi
 
     [ ! -d "$dirInstall" ] && mkdir -p "$dirInstall"
@@ -346,8 +353,16 @@ UpdateVersion() {
         arch=$(detectArch)
     fi
 
+    printf " Останавливаем службу...\n"
     /etc/init.d/$serviceName stop 2>/dev/null
-    downloadTorrServer "$latestVersion" "$arch" || return 1
+    sleep 1
+    # Убиваем остаточные процессы если есть
+    killall "TorrServer-${arch}" 2>/dev/null
+    sleep 1
+    downloadTorrServer "$latestVersion" "$arch" || {
+        /etc/init.d/$serviceName start 2>/dev/null
+        return 1
+    }
     /etc/init.d/$serviceName start
     printf " ✓ TorrServer обновлён до %s!\n" "$latestVersion"
 }
