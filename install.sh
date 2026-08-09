@@ -4,6 +4,7 @@ username="torrserver"
 dirInstall="/opt/torrserver"
 serviceName="torrserver"
 scriptname=$(basename "$0")
+NO_COLOR=0
 
 # Цвета для вывода (POSIX sh совместимо)
 RED='\033[0;31m'
@@ -13,20 +14,23 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 colorize() {
-    case $1 in
-        red)    printf "${RED}%s${NC}" "$2" ;;
-        green)  printf "${GREEN}%s${NC}" "$2" ;;
-        yellow) printf "${YELLOW}%s${NC}" "$2" ;;
-        cyan)   printf "${CYAN}%s${NC}" "$2" ;;
-        *)      printf "%s" "$2" ;;
-    esac
+    if [ "$NO_COLOR" -eq 1 ]; then
+        printf "%s" "$2"
+    else
+        case $1 in
+            red)    printf "${RED}%s${NC}" "$2" ;;
+            green)  printf "${GREEN}%s${NC}" "$2" ;;
+            yellow) printf "${YELLOW}%s${NC}" "$2" ;;
+            cyan)   printf "${CYAN}%s${NC}" "$2" ;;
+            *)      printf "%s" "$2" ;;
+        esac
+    fi
 }
 
 isRoot() {
     [ "$(id -u)" -eq 0 ]
 }
 
-# Определяем архитектуру автоматически
 detectArch() {
     machine=$(uname -m)
     case "$machine" in
@@ -101,12 +105,19 @@ getInstalledArch() {
 }
 
 getServicePort() {
-    # Читаем порт из init-скрипта
     grep -o '\-\-port [0-9]*' /etc/init.d/$serviceName 2>/dev/null | awk '{print $2}' | head -1
 }
 
+getAuthCredentials() {
+    local accsFile="$dirInstall/accs.db"
+    [ ! -f "$accsFile" ] && return
+    local user pass
+    user=$(grep -o '"[^"]*":' "$accsFile" | head -1 | tr -d '": ')
+    pass=$(grep -o ': *"[^"]*"' "$accsFile" | head -1 | sed 's/: *"//;s/"//')
+    [ -n "$user" ] && [ -n "$pass" ] && printf "%s:%s" "$user" "$pass"
+}
+
 checkInstalled() {
-    # Проверяем через файл binary, потом через detectArch
     local bin=""
     if [ -f "$dirInstall/binary" ]; then
         bin="$dirInstall/$(cat "$dirInstall/binary")"
@@ -115,18 +126,14 @@ checkInstalled() {
         arch=$(detectArch)
         [ -n "$arch" ] && bin="$dirInstall/TorrServer-${arch}"
     fi
-    if [ -n "$bin" ] && [ -f "$bin" ]; then
-        return 0
-    fi
-    return 1
+    [ -n "$bin" ] && [ -f "$bin" ]
 }
 
 checkDiskSpace() {
-    local required=80  # МБ
+    local required=80
     local available
     available=$(df "$dirInstall" 2>/dev/null | awk 'NR==2{print int($4/1024)}')
     if [ -z "$available" ]; then
-        # dirInstall ещё не создан — проверяем /opt или /
         available=$(df /opt 2>/dev/null | awk 'NR==2{print int($4/1024)}')
         [ -z "$available" ] && available=$(df / | awk 'NR==2{print int($4/1024)}')
     fi
@@ -161,13 +168,28 @@ isRunning() {
     pidof "TorrServer-${arch}" >/dev/null 2>&1
 }
 
+restartService() {
+    printf " Перезапускаем TorrServer...\n"
+    /etc/init.d/$serviceName restart 2>/dev/null
+    sleep 2
+    if isRunning; then
+        printf " ✓ TorrServer $(colorize green ЗАПУЩЕН)\n"
+    else
+        printf " $(colorize yellow !) TorrServer не запустился — проверьте: logread | grep torrserver\n"
+    fi
+}
+
 helpUsage() {
-    printf "Использование: %s [команда]\n\n" "$scriptname"
-    printf "  %-28s %s\n" "-i | --install | install" "установка последней версии"
-    printf "  %-28s %s\n" "-u | --update  | update"  "обновление до последней версии"
-    printf "  %-28s %s\n" "-s | --status  | status"  "статус службы"
-    printf "  %-28s %s\n" "-r | --remove  | remove"  "удаление TorrServer"
-    printf "  %-28s %s\n" "-h | --help    | help"    "эта справка"
+    printf "Использование: %s [команда] [флаги]\n\n" "$scriptname"
+    printf "Команды:\n"
+    printf "  %-30s %s\n" "-i | --install | install"   "установка последней версии"
+    printf "  %-30s %s\n" "-u | --update  | update"    "обновление до последней версии"
+    printf "  %-30s %s\n" "-s | --status  | status"    "статус службы"
+    printf "  %-30s %s\n" "-r | --remove  | remove"    "удаление TorrServer"
+    printf "  %-30s %s\n" "-h | --help    | help"      "эта справка"
+    printf "\nФлаги:\n"
+    printf "  %-30s %s\n" "--no-color"                 "вывод без цветов (для логов/скриптов)"
+    printf "  %-30s %s\n" "--auto"                     "автоматический режим (для cron)"
 }
 
 cleanup() {
@@ -199,22 +221,6 @@ uninstall() {
     fi
 }
 
-getAuthCredentials() {
-    # Читаем логин и пароль из accs.db (формат: { "user": "pass" })
-    local accsFile="$dirInstall/accs.db"
-    if [ ! -f "$accsFile" ]; then
-        echo ""
-        return
-    fi
-    # Извлекаем первую пару ключ:значение из JSON
-    local user pass
-    user=$(grep -o '"[^"]*":' "$accsFile" | head -1 | tr -d '":' | tr -d ' ')
-    pass=$(grep -o ': *"[^"]*"' "$accsFile" | head -1 | sed 's/: *"//;s/"//')
-    if [ -n "$user" ] && [ -n "$pass" ]; then
-        printf "%s:%s" "$user" "$pass"
-    fi
-}
-
 showStatus() {
     printf "\n"
     printf "=============================================================\n"
@@ -222,8 +228,7 @@ showStatus() {
     printf "=============================================================\n"
 
     if ! checkInstalled; then
-        printf " Состояние:  $(colorize red НЕ УСТАНОВЛЕН)\n"
-        printf "\n"
+        printf " Состояние:  $(colorize red НЕ УСТАНОВЛЕН)\n\n"
         return
     fi
 
@@ -241,7 +246,6 @@ showStatus() {
     if isRunning; then
         printf " Служба:     $(colorize green ЗАПУЩЕНА)\n"
         printf " Адрес:      $(colorize green "http://%s:%s")\n" "$ip" "$port"
-        # uptime процесса через /proc
         local pid
         pid=$(pidof "TorrServer-${arch}" 2>/dev/null | awk '{print $1}')
         if [ -n "$pid" ] && [ -f "/proc/$pid/stat" ]; then
@@ -266,12 +270,11 @@ showStatus() {
     fi
 
     # Авторизация
-    local creds
+    local creds authUser authPass
     creds=$(getAuthCredentials)
     if [ -n "$creds" ]; then
-        local authUser authPass
         authUser="${creds%%:*}"
-        authPass="${authPass="${creds#*:}"}"
+        authPass="${creds#*:}"
         printf " Авториз.:   $(colorize yellow ВКЛ)\n"
         printf " Логин:      %s\n" "$authUser"
         printf " Пароль:     %s\n" "$authPass"
@@ -279,7 +282,14 @@ showStatus() {
         printf " Авториз.:   $(colorize cyan ВЫКЛ)\n"
     fi
 
-    # Проверяем наличие обновления
+    # Автообновление
+    if crontab -l 2>/dev/null | grep -q "torrserver.*update\|update.*torrserver"; then
+        printf " Автообн.:   $(colorize green ВКЛ)\n"
+    else
+        printf " Автообн.:   $(colorize cyan ВЫКЛ)\n"
+    fi
+
+    # Проверка обновлений
     printf " Обновление: "
     local latest
     latest=$(getLatestRelease)
@@ -291,8 +301,7 @@ showStatus() {
         printf "не удалось проверить\n"
     fi
 
-    printf "=============================================================\n"
-    printf "\n"
+    printf "=============================================================\n\n"
 }
 
 downloadTorrServer() {
@@ -308,11 +317,10 @@ downloadTorrServer() {
         rm -f "$tmpFile"
         return 1
     fi
-    # Проверяем что скачали не HTML страницу с ошибкой
     local filesize
     filesize=$(wc -c < "$tmpFile" 2>/dev/null || echo 0)
     if [ "$filesize" -lt 1000000 ]; then
-        printf " - Файл слишком мал (%s байт), возможно архитектура недоступна\n" "$filesize"
+        printf " - Файл слишком мал (%s байт) — возможно архитектура недоступна в этом релизе\n" "$filesize"
         rm -f "$tmpFile"
         return 1
     fi
@@ -323,83 +331,9 @@ downloadTorrServer() {
     printf " - Загрузка завершена\n"
 }
 
-installTorrServer() {
-    printf "\n Устанавливаем TorrServer...\n\n"
-
-    # Определяем архитектуру
-    local arch
-    arch=$(detectArch)
-    if [ -z "$arch" ]; then
-        printf " - Неизвестная архитектура: %s\n" "$(uname -m)"
-        printf "   Варианты: linux-amd64, linux-arm64, linux-arm7, linux-arm5,\n"
-        printf "             linux-mips, linux-mipsle, linux-mips64, linux-386, linux-riscv64\n"
-        printf " Введите архитектуру: "
-        read -r arch </dev/tty
-        [ -z "$arch" ] && exit 1
-    fi
-    printf " Архитектура: %s\n" "$arch"
-
-    # Уже установлен?
-    if [ -f "$dirInstall/TorrServer-${arch}" ]; then
-        printf " TorrServer уже установлен (версия: %s)\n" "$(getInstalledVersion)"
-        printf " Обновить до последней версии? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
-        read -r answer_up </dev/tty
-        [ "$answer_up" != "${answer_up#[YyДд]}" ] && UpdateVersion
-        return
-    fi
-
-    checkDiskSpace
-
-    [ ! -d "$dirInstall" ] && mkdir -p "$dirInstall"
-
-    # Последняя версия
-    printf " Получаем информацию о последней версии...\n"
-    local latestVersion
-    latestVersion=$(getLatestRelease)
-    if [ -z "$latestVersion" ]; then
-        printf " - Не удалось получить версию с GitHub\n"
-        exit 1
-    fi
-    printf " Последняя версия: %s\n" "$latestVersion"
-
-    downloadTorrServer "$latestVersion" "$arch" || exit 1
-
-    addUser
-
-    # Порт
-    local servicePort="8090"
-    printf "\n Порт по умолчанию: 8090. Изменить? (%s/%s) " "$(colorize yellow Y)es" "$(colorize green N)o"
-    read -r answer_cp </dev/tty
-    if [ "$answer_cp" != "${answer_cp#[YyДд]}" ]; then
-        printf " Введите порт (1024-65535): "
-        read -r answer_port </dev/tty
-        if printf "%s" "$answer_port" | grep -qE '^[0-9]+$' \
-            && [ "$answer_port" -ge 1024 ] && [ "$answer_port" -le 65535 ]; then
-            servicePort=$answer_port
-        else
-            printf " - Некорректный порт, используется 8090\n"
-        fi
-    fi
-
-    # Авторизация
-    local authOptions="--port $servicePort --path $dirInstall"
-    local isAuthUser="" isAuthPass=""
-    printf " Включить HTTP-авторизацию? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
-    read -r answer_auth </dev/tty
-    if [ "$answer_auth" != "${answer_auth#[YyДд]}" ]; then
-        printf " Пользователь: "
-        read -r isAuthUser </dev/tty
-        printf " Пароль: "
-        read -r isAuthPass </dev/tty
-        printf '{\n  "%s": "%s"\n}\n' "$isAuthUser" "$isAuthPass" > "$dirInstall/accs.db"
-        chmod 600 "$dirInstall/accs.db"
-        authOptions="--port $servicePort --path $dirInstall --httpauth"
-        printf " - Учётные данные сохранены\n"
-    fi
-
-    local binName="TorrServer-${arch}"
-
-    # Init-скрипт для OpenWrt (procd)
+writeInitScript() {
+    local binName="$1"
+    local authOptions="$2"
     cat > /etc/init.d/$serviceName << EOF
 #!/bin/sh /etc/rc.common
 
@@ -429,12 +363,253 @@ reload_service() {
     start
 }
 EOF
-
     chmod +x /etc/init.d/$serviceName
+}
+
+changeAuth() {
+    if ! checkInstalled; then
+        printf " TorrServer не установлен.\n"
+        return 1
+    fi
+
+    local port
+    port=$(getServicePort)
+    [ -z "$port" ] && port="8090"
+
+    local creds authUser authPass
+    creds=$(getAuthCredentials)
+    if [ -n "$creds" ]; then
+        authUser="${creds%%:*}"
+        printf " Текущий логин: %s\n" "$authUser"
+    fi
+
+    printf "\n Варианты:\n"
+    printf "  1 — сменить логин/пароль\n"
+    printf "  2 — отключить авторизацию\n"
+    printf "  3 — включить авторизацию\n"
+    printf "  0 — отмена\n"
+    printf " Выбор: "
+    read -r auth_choice </dev/tty
+
+    local newUser newPass authOptions
+    case $auth_choice in
+        1)
+            printf " Новый логин: "
+            read -r newUser </dev/tty
+            printf " Новый пароль: "
+            read -r newPass </dev/tty
+            printf '{\n  "%s": "%s"\n}\n' "$newUser" "$newPass" > "$dirInstall/accs.db"
+            chmod 600 "$dirInstall/accs.db"
+            authOptions="--port $port --path $dirInstall --httpauth"
+            printf " - Учётные данные обновлены\n"
+            ;;
+        2)
+            rm -f "$dirInstall/accs.db"
+            authOptions="--port $port --path $dirInstall"
+            printf " - Авторизация отключена\n"
+            ;;
+        3)
+            printf " Логин: "
+            read -r newUser </dev/tty
+            printf " Пароль: "
+            read -r newPass </dev/tty
+            printf '{\n  "%s": "%s"\n}\n' "$newUser" "$newPass" > "$dirInstall/accs.db"
+            chmod 600 "$dirInstall/accs.db"
+            authOptions="--port $port --path $dirInstall --httpauth"
+            printf " - Авторизация включена\n"
+            ;;
+        *)
+            printf " Отменено\n"
+            return 0
+            ;;
+    esac
+
+    local arch binName
+    arch=$(getInstalledArch)
+    binName="TorrServer-${arch}"
+    writeInitScript "$binName" "$authOptions"
+
+    printf " Перезапускаем службу...\n"
+    /etc/init.d/$serviceName stop 2>/dev/null
+    sleep 1
+    /etc/init.d/$serviceName start
+    sleep 1
+    if isRunning; then
+        printf " ✓ Настройки применены, TorrServer $(colorize green ЗАПУЩЕН)\n"
+    else
+        printf " $(colorize yellow !) TorrServer не запустился — проверьте: logread | grep torrserver\n"
+    fi
+}
+
+changePort() {
+    if ! checkInstalled; then
+        printf " TorrServer не установлен.\n"
+        return 1
+    fi
+
+    local currentPort
+    currentPort=$(getServicePort)
+    [ -z "$currentPort" ] && currentPort="8090"
+    printf " Текущий порт: %s\n" "$currentPort"
+    printf " Новый порт (1024-65535): "
+    read -r newPort </dev/tty
+
+    if ! printf "%s" "$newPort" | grep -qE '^[0-9]+$' \
+        || [ "$newPort" -lt 1024 ] || [ "$newPort" -gt 65535 ]; then
+        printf " - Некорректный порт\n"
+        return 1
+    fi
+
+    local creds authOptions
+    creds=$(getAuthCredentials)
+    if [ -n "$creds" ]; then
+        authOptions="--port $newPort --path $dirInstall --httpauth"
+    else
+        authOptions="--port $newPort --path $dirInstall"
+    fi
+
+    local arch binName
+    arch=$(getInstalledArch)
+    binName="TorrServer-${arch}"
+    writeInitScript "$binName" "$authOptions"
+
+    printf " Перезапускаем службу...\n"
+    /etc/init.d/$serviceName stop 2>/dev/null
+    sleep 1
+    /etc/init.d/$serviceName start
+    sleep 1
+    if isRunning; then
+        local ip
+        ip=$(getIP)
+        [ -z "$ip" ] && ip="<IP роутера>"
+        printf " ✓ Порт изменён. Новый адрес: $(colorize cyan "http://%s:%s")\n" "$ip" "$newPort"
+    else
+        printf " $(colorize yellow !) TorrServer не запустился — проверьте: logread | grep torrserver\n"
+    fi
+}
+
+setupAutoupdate() {
+    if ! checkInstalled; then
+        printf " TorrServer не установлен.\n"
+        return 1
+    fi
+
+    local cronFile="/etc/crontabs/root"
+    local cronLine="0 4 * * * sh $(readlink -f "$0") --no-color --auto update >> /var/log/torrserver-update.log 2>&1"
+
+    # Проверяем текущее состояние
+    if crontab -l 2>/dev/null | grep -q "torrserver.*update\|update.*torrserver"; then
+        printf " Автообновление уже настроено.\n"
+        printf " Отключить? (%s/%s) " "$(colorize red Y)es" "$(colorize yellow N)o"
+        read -r answer </dev/tty
+        if [ "$answer" != "${answer#[YyДд]}" ]; then
+            # Удаляем строку с torrserver update из cron
+            local tmpCron="/tmp/cron_torrserver.tmp"
+            crontab -l 2>/dev/null | grep -v "torrserver.*update\|update.*torrserver" > "$tmpCron"
+            crontab "$tmpCron"
+            rm -f "$tmpCron"
+            printf " ✓ Автообновление отключено\n"
+        else
+            printf " Отменено\n"
+        fi
+        return 0
+    fi
+
+    printf "\n Автообновление будет запускаться каждый день в 04:00\n"
+    printf " Лог: /var/log/torrserver-update.log\n"
+    printf " Включить? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
+    read -r answer </dev/tty
+    if [ "$answer" != "${answer#[YyДд]}" ]; then
+        # Добавляем в cron (mkdir на случай если файла нет)
+        mkdir -p /etc/crontabs
+        local tmpCron="/tmp/cron_torrserver.tmp"
+        crontab -l 2>/dev/null > "$tmpCron"
+        printf "%s\n" "$cronLine" >> "$tmpCron"
+        crontab "$tmpCron"
+        rm -f "$tmpCron"
+        # Убеждаемся что crond запущен
+        /etc/init.d/cron enable 2>/dev/null
+        /etc/init.d/cron start 2>/dev/null
+        printf " ✓ Автообновление включено (ежедневно в 04:00)\n"
+    else
+        printf " Отменено\n"
+    fi
+}
+
+installTorrServer() {
+    printf "\n Устанавливаем TorrServer...\n\n"
+
+    local arch
+    arch=$(detectArch)
+    if [ -z "$arch" ]; then
+        printf " - Неизвестная архитектура: %s\n" "$(uname -m)"
+        printf "   Варианты: linux-amd64, linux-arm64, linux-arm7, linux-arm5,\n"
+        printf "             linux-mips, linux-mipsle, linux-mips64, linux-386, linux-riscv64\n"
+        printf " Введите архитектуру: "
+        read -r arch </dev/tty
+        [ -z "$arch" ] && exit 1
+    fi
+    printf " Архитектура: %s\n" "$arch"
+
+    if [ -f "$dirInstall/TorrServer-${arch}" ]; then
+        printf " TorrServer уже установлен (версия: %s)\n" "$(getInstalledVersion)"
+        printf " Обновить до последней версии? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
+        read -r answer_up </dev/tty
+        [ "$answer_up" != "${answer_up#[YyДд]}" ] && UpdateVersion
+        return
+    fi
+
+    checkDiskSpace
+
+    [ ! -d "$dirInstall" ] && mkdir -p "$dirInstall"
+
+    printf " Получаем информацию о последней версии...\n"
+    local latestVersion
+    latestVersion=$(getLatestRelease)
+    if [ -z "$latestVersion" ]; then
+        printf " - Не удалось получить версию с GitHub\n"
+        exit 1
+    fi
+    printf " Последняя версия: %s\n" "$latestVersion"
+
+    downloadTorrServer "$latestVersion" "$arch" || exit 1
+
+    addUser
+
+    local servicePort="8090"
+    printf "\n Порт по умолчанию: 8090. Изменить? (%s/%s) " "$(colorize yellow Y)es" "$(colorize green N)o"
+    read -r answer_cp </dev/tty
+    if [ "$answer_cp" != "${answer_cp#[YyДд]}" ]; then
+        printf " Введите порт (1024-65535): "
+        read -r answer_port </dev/tty
+        if printf "%s" "$answer_port" | grep -qE '^[0-9]+$' \
+            && [ "$answer_port" -ge 1024 ] && [ "$answer_port" -le 65535 ]; then
+            servicePort=$answer_port
+        else
+            printf " - Некорректный порт, используется 8090\n"
+        fi
+    fi
+
+    local authOptions="--port $servicePort --path $dirInstall"
+    local isAuthUser="" isAuthPass=""
+    printf " Включить HTTP-авторизацию? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
+    read -r answer_auth </dev/tty
+    if [ "$answer_auth" != "${answer_auth#[YyДд]}" ]; then
+        printf " Пользователь: "
+        read -r isAuthUser </dev/tty
+        printf " Пароль: "
+        read -r isAuthPass </dev/tty
+        printf '{\n  "%s": "%s"\n}\n' "$isAuthUser" "$isAuthPass" > "$dirInstall/accs.db"
+        chmod 600 "$dirInstall/accs.db"
+        authOptions="--port $servicePort --path $dirInstall --httpauth"
+        printf " - Учётные данные сохранены\n"
+    fi
+
+    local binName="TorrServer-${arch}"
+    writeInitScript "$binName" "$authOptions"
     /etc/init.d/$serviceName enable
     /etc/init.d/$serviceName start
 
-    # Даём процессу время подняться
     sleep 2
 
     local serverIP
@@ -458,6 +633,9 @@ EOF
 }
 
 UpdateVersion() {
+    # --auto флаг: тихий режим для cron (без лишнего вывода если версия актуальна)
+    local auto_mode="$1"
+
     if ! checkInstalled; then
         printf " TorrServer не установлен.\n"
         return 1
@@ -506,9 +684,21 @@ UpdateVersion() {
     fi
 }
 
-# === Основной код ===
+# === Парсим флаги ===
+AUTO_MODE=0
+ARGS=""
+for arg in "$@"; do
+    case "$arg" in
+        --no-color) NO_COLOR=1 ;;
+        --auto)     AUTO_MODE=1 ;;
+        *)          ARGS="$ARGS $arg" ;;
+    esac
+done
+# Убираем ведущий пробел
+ARGS="${ARGS# }"
 
-case $1 in
+# === Основной код ===
+case $ARGS in
     -i|--install|install)
         initialCheck
         installTorrServer
@@ -516,7 +706,7 @@ case $1 in
         ;;
     -u|--update|update)
         initialCheck
-        UpdateVersion
+        UpdateVersion "$AUTO_MODE"
         exit
         ;;
     -s|--status|status)
@@ -535,13 +725,13 @@ case $1 in
     "")
         ;;
     *)
-        printf " Неизвестная команда: %s\n" "$1"
+        printf " Неизвестная команда: %s\n" "$ARGS"
         helpUsage
         exit 1
         ;;
 esac
 
-# Интерактивное меню
+# === Интерактивное меню ===
 printf "\n"
 printf "=============================================================\n"
 printf " TorrServer — установщик для OpenWrt / FriendlyWrt\n"
@@ -557,9 +747,13 @@ if checkInstalled 2>/dev/null; then
 fi
 
 printf "\n"
-printf "  $(colorize green i) — установить / обновить\n"
-printf "  $(colorize cyan  s) — статус\n"
-printf "  $(colorize red   d) — удалить\n"
+printf "  $(colorize green  i) — установить / обновить\n"
+printf "  $(colorize cyan   s) — статус\n"
+printf "  $(colorize yellow p) — сменить порт\n"
+printf "  $(colorize yellow a) — настроить авторизацию\n"
+printf "  $(colorize cyan   c) — автообновление (cron)\n"
+printf "  $(colorize green  r) — перезапустить службу\n"
+printf "  $(colorize red    d) — удалить\n"
 printf "  $(colorize yellow n) — выйти\n"
 printf "\n"
 
@@ -575,6 +769,22 @@ while true; do
         [SsСс]*)
             showStatus
             ;;
+        [PpПп]*)
+            isRoot || { printf " Требуется root\n"; continue; }
+            changePort
+            ;;
+        [AaАа]*)
+            isRoot || { printf " Требуется root\n"; continue; }
+            changeAuth
+            ;;
+        [CcСc]*)
+            isRoot || { printf " Требуется root\n"; continue; }
+            setupAutoupdate
+            ;;
+        [RrРр]*)
+            isRoot || { printf " Требуется root\n"; continue; }
+            restartService
+            ;;
         [DdУу]*)
             initialCheck
             uninstall
@@ -584,7 +794,7 @@ while true; do
             break
             ;;
         *)
-            printf " Введите i, s, d или n\n"
+            printf " Введите i, s, p, a, c, r, d или n\n"
             ;;
     esac
 done
