@@ -49,7 +49,6 @@ sh install.sh -i
 install.sh -i | --install | install   установка последней версии
 install.sh -u | --update  | update    обновление до последней версии
 install.sh -s | --status  | status    статус службы
-install.sh      --stremio | stremio   интеграция со Stremio
 install.sh -r | --remove  | remove    удаление TorrServer
 install.sh -h | --help    | help      справка
 
@@ -103,46 +102,6 @@ install.sh -h | --help    | help      справка
 ```
 
 ---
-
-## Интеграция со Stremio
-
-TorrServer отлично работает в связке со Stremio. Скрипт генерирует готовые ссылки и инструкцию для двух способов подключения.
-
-```sh
-sh install.sh stremio
-```
-
-Или через меню → пункт `t`.
-
-### Способ 1 — Torrentio напрямую
-
-Torrentio — популярный Stremio-аддон, который агрегирует торренты с множества трекеров (включая Rutor и Rutracker). Stremio использует свой движок для воспроизведения.
-
-Скрипт генерирует ссылку с предустановленными настройками: русские трекеры, приоритет русского языка, без кэм-рипов.
-
-```
-Stremio → Torrentio API → магнет-ссылка → встроенный движок Stremio
-```
-
-### Способ 2 — Moisa (рекомендуется)
-
-[Moisa](https://moisa.fun) — аддон-прокси, который направляет потоки из Torrentio через **ваш TorrServer** на роутере. Воспроизведение идёт через роутер — более стабильный буфер, лучше для 4K.
-
-Скрипт автоматически подставляет IP роутера и порт TorrServer в ссылку Moisa.
-
-```
-Stremio → Moisa → Torrentio API → TorrServer (роутер) → Stremio
-```
-
-**Требование:** устройство со Stremio должно быть в одной сети с роутером.
-
-### Сохранённые ссылки
-
-После запуска команды `stremio` ссылки сохраняются в файл:
-
-```
-/opt/torrserver/stremio-links.txt
-```
 
 ## Автообновление
 
