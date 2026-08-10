@@ -185,11 +185,155 @@ helpUsage() {
     printf "  %-30s %s\n" "-i | --install | install"   "установка последней версии"
     printf "  %-30s %s\n" "-u | --update  | update"    "обновление до последней версии"
     printf "  %-30s %s\n" "-s | --status  | status"    "статус службы"
+    printf "  %-30s %s\n" "--stremio    | stremio"     "инструкция по интеграции со Stremio"
     printf "  %-30s %s\n" "-r | --remove  | remove"    "удаление TorrServer"
     printf "  %-30s %s\n" "-h | --help    | help"      "эта справка"
     printf "\nФлаги:\n"
     printf "  %-30s %s\n" "--no-color"                 "вывод без цветов (для логов/скриптов)"
     printf "  %-30s %s\n" "--auto"                     "автоматический режим (для cron)"
+}
+
+# URL-кодирование строки (заменяем спецсимволы для вставки в URL)
+urlencode() {
+    printf "%s" "$1" | sed \
+        -e 's/%/%25/g' \
+        -e 's/ /%20/g' \
+        -e 's/!/%21/g' \
+        -e 's/"/%22/g' \
+        -e 's/#/%23/g' \
+        -e 's/\$/%24/g' \
+        -e 's/&/%26/g' \
+        -e "s/'/%27/g" \
+        -e 's/(/%28/g' \
+        -e 's/)/%29/g' \
+        -e 's/\*/%2A/g' \
+        -e 's/+/%2B/g' \
+        -e 's/,/%2C/g' \
+        -e 's/:/%3A/g' \
+        -e 's/;/%3B/g' \
+        -e 's/=/%3D/g' \
+        -e 's/?/%3F/g' \
+        -e 's/@/%40/g'
+}
+
+stremioSetup() {
+    printf "\n"
+    printf "=============================================================\n"
+    printf " Интеграция TorrServer + Stremio\n"
+    printf "=============================================================\n"
+
+    if ! checkInstalled; then
+        printf " $(colorize yellow !) TorrServer не установлен.\n"
+        printf "   Сначала выполните установку: sh %s -i\n\n" "$scriptname"
+        return 1
+    fi
+
+    if ! isRunning; then
+        printf " $(colorize yellow !) TorrServer установлен, но не запущен.\n"
+        printf "   Запустите: /etc/init.d/torrserver start\n\n"
+    fi
+
+    local ip port tsUrl
+    ip=$(getIP)
+    port=$(getServicePort)
+    [ -z "$ip" ]   && ip="<IP-роутера>"
+    [ -z "$port" ] && port="8090"
+    tsUrl="http://${ip}:${port}"
+
+    # --- Способ 1: прямая ссылка Torrentio с русскими трекерами ---
+    # Конфиг: русские трекеры, приоритет русского языка, без кэма и скринеров
+    local torrentioConfig="providers=rutor,rutracker,1337x,thepiratebay,torrentgalaxy|language=russian|qualityfilter=cam,scr,unknown"
+    local torrentioManifest="https://torrentio.strem.fun/${torrentioConfig}/manifest.json"
+    local torrentioStremio="stremio://torrentio.strem.fun/${torrentioConfig}/manifest.json"
+
+    # --- Способ 2: Moisa — проксирование через ваш TorrServer ---
+    # Moisa принимает TorrServer URL как параметр конфигурации
+    local tsUrlEncoded
+    tsUrlEncoded=$(urlencode "$tsUrl")
+    local moisaConfig="torrserverUrl=${tsUrlEncoded}|qualityfilter=cam,scr,unknown"
+    local moisaManifest="https://moisa.fun/${moisaConfig}/manifest.json"
+    local moisaStremio="stremio://moisa.fun/${moisaConfig}/manifest.json"
+    local moisaConfigure="https://moisa.fun/configure"
+
+    printf "\n"
+    printf " Ваш TorrServer: $(colorize cyan "%s")\n" "$tsUrl"
+    printf "\n"
+    printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    printf " СПОСОБ 1 — Torrentio (проще, без TorrServer как бэкенда)\n"
+    printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    printf "\n"
+    printf " Torrentio — популярный Stremio-аддон, агрегирует торренты\n"
+    printf " из множества трекеров. В этом варианте Stremio использует\n"
+    printf " собственный движок для воспроизведения (не TorrServer).\n"
+    printf " Но можно использовать оба способа одновременно.\n"
+    printf "\n"
+    printf " Ссылка для установки в Stremio:\n"
+    printf " $(colorize cyan "%s")\n" "$torrentioManifest"
+    printf "\n"
+    printf " Как добавить:\n"
+    printf "  1. Откройте Stremio → Аддоны → значок поиска\n"
+    printf "  2. Вставьте ссылку выше и нажмите Enter\n"
+    printf "  3. Нажмите «Установить»\n"
+    printf "\n"
+    printf " Настройка под себя: $(colorize cyan "https://torrentio.strem.fun/configure")\n"
+    printf "\n"
+    printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    printf " СПОСОБ 2 — Moisa (Torrentio → ваш TorrServer → Stremio)\n"
+    printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    printf "\n"
+    printf " Moisa проксирует потоки из Torrentio через ваш TorrServer.\n"
+    printf " Воспроизведение идёт через роутер — более стабильный буфер,\n"
+    printf " лучше для 4K, нет зависимости от встроенного движка Stremio.\n"
+    printf "\n"
+    printf " $(colorize yellow "ВАЖНО:") IP роутера должен быть доступен с устройства\n"
+    printf " на котором запущен Stremio (телевизор, телефон, PC).\n"
+    printf " Если Stremio на том же роутере — используйте 127.0.0.1.\n"
+    printf "\n"
+    printf " Шаг 1 — Настройте Moisa:\n"
+    printf " Откройте в браузере: $(colorize cyan "%s")\n" "$moisaConfigure"
+    printf " Введите TorrServer URL: $(colorize green "%s")\n" "$tsUrl"
+    printf " Нажмите «Generate addon URL»\n"
+    printf "\n"
+    printf " Или используйте готовую ссылку (если IP %s верный):\n" "$ip"
+    printf " $(colorize cyan "%s")\n" "$moisaManifest"
+    printf "\n"
+    printf " Шаг 2 — Установите аддон в Stremio:\n"
+    printf "  1. Stremio → Аддоны → значок поиска\n"
+    printf "  2. Вставьте ссылку выше и нажмите Enter\n"
+    printf "  3. Нажмите «Установить»\n"
+    printf "\n"
+    printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    printf " КАК ЭТО РАБОТАЕТ\n"
+    printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    printf "\n"
+    printf " Способ 1 (Torrentio напрямую):\n"
+    printf "  Stremio → Torrentio API → магнет-ссылка → встроенный движок\n"
+    printf "\n"
+    printf " Способ 2 (через TorrServer):\n"
+    printf "  Stremio → Moisa → Torrentio API → TorrServer (роутер) → Stremio\n"
+    printf "\n"
+    printf " Рекомендация: попробуйте Способ 1 сначала — он проще.\n"
+    printf " Если буферизация нестабильна или нужна поддержка 4K —\n"
+    printf " переходите на Способ 2 через Moisa.\n"
+    printf "\n"
+    printf "=============================================================\n"
+    printf "\n"
+
+    # Сохраняем ссылки в файл для удобства
+    local linksFile="$dirInstall/stremio-links.txt"
+    cat > "$linksFile" << EOF
+TorrServer URL: $tsUrl
+
+=== Способ 1: Torrentio (прямой) ===
+Manifest: $torrentioManifest
+Настройка: https://torrentio.strem.fun/configure
+
+=== Способ 2: Moisa (через TorrServer) ===
+Manifest: $moisaManifest
+Настройка: $moisaConfigure
+TorrServer URL для Moisa: $tsUrl
+EOF
+    printf " Ссылки сохранены в: $(colorize cyan "%s")\n\n" "$linksFile"
 }
 
 cleanup() {
@@ -668,6 +812,11 @@ installTorrServer() {
         printf " Логин: %s  Пароль: %s\n" "$isAuthUser" "$isAuthPass"
     fi
     printf "\n"
+
+    printf " Показать инструкцию по подключению к Stremio? (%s/%s) " \
+        "$(colorize green Y)es" "$(colorize yellow N)o"
+    read -r answer_stremio </dev/tty
+    [ "$answer_stremio" != "${answer_stremio#[YyДд]}" ] && stremioSetup
 }
 
 UpdateVersion() {
@@ -751,6 +900,10 @@ case $ARGS in
         showStatus
         exit
         ;;
+    --stremio|stremio)
+        stremioSetup
+        exit
+        ;;
     -r|--remove|remove)
         initialCheck
         uninstall
@@ -787,6 +940,7 @@ fi
 printf "\n"
 printf "  $(colorize green  i) — установить / обновить\n"
 printf "  $(colorize cyan   s) — статус\n"
+printf "  $(colorize cyan   t) — интеграция со Stremio\n"
 printf "  $(colorize yellow p) — сменить порт\n"
 printf "  $(colorize yellow a) — настроить авторизацию\n"
 printf "  $(colorize cyan   c) — автообновление (cron)\n"
@@ -806,6 +960,9 @@ while true; do
             ;;
         [SsСс]*)
             showStatus
+            ;;
+        [TtТт]*)
+            stremioSetup
             ;;
         [PpПп]*)
             isRoot || { printf " Требуется root\n"; continue; }
@@ -832,7 +989,7 @@ while true; do
             break
             ;;
         *)
-            printf " Введите i, s, p, a, c, r, d или n\n"
+            printf " Введите i, s, t, p, a, c, r, d или n\n"
             ;;
     esac
 done
