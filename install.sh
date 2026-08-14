@@ -138,10 +138,17 @@ getServicePort() {
 getAuthCredentials() {
     local accsFile="$dirInstall/accs.db"
     [ ! -f "$accsFile" ] && return
+    # Формат файла: { "user": "pass" }
+    # Извлекаем все строки в кавычках и берём первую (логин) и вторую (пароль)
     local user pass
-    user=$(grep -o '"[^"]*":' "$accsFile" | head -1 | tr -d '": ')
-    pass=$(grep -o ': *"[^"]*"' "$accsFile" | head -1 | sed 's/: *"//;s/"//')
+    user=$(grep -o '"[^"]*"' "$accsFile" | sed -n '1p' | tr -d '"')
+    pass=$(grep -o '"[^"]*"' "$accsFile" | sed -n '2p' | tr -d '"')
     [ -n "$user" ] && [ -n "$pass" ] && printf "%s:%s" "$user" "$pass"
+}
+
+isAuthEnabled() {
+    # Источник истины — флаг --httpauth в init-скрипте
+    grep -q '\-\-httpauth' /etc/init.d/$serviceName 2>/dev/null
 }
 
 checkInstalled() {
@@ -296,15 +303,19 @@ showStatus() {
         printf " Адрес:      http://%s:%s\n" "$ip" "$port"
     fi
 
-    # Авторизация
-    local creds authUser authPass
-    creds=$(getAuthCredentials)
-    if [ -n "$creds" ]; then
-        authUser="${creds%%:*}"
-        authPass="${creds#*:}"
-        printf " Авториз.:   $(colorize yellow ВКЛ)\n"
-        printf " Логин:      %s\n" "$authUser"
-        printf " Пароль:     %s\n" "$authPass"
+    # Авторизация — источник истины: флаг --httpauth в init-скрипте
+    if isAuthEnabled; then
+        local creds authUser authPass
+        creds=$(getAuthCredentials)
+        if [ -n "$creds" ]; then
+            authUser="${creds%%:*}"
+            authPass="${creds#*:}"
+            printf " Авториз.:   $(colorize yellow ВКЛ)\n"
+            printf " Логин:      %s\n" "$authUser"
+            printf " Пароль:     %s\n" "$authPass"
+        else
+            printf " Авториз.:   $(colorize yellow ВКЛ) $(colorize red "(accs.db не найден!)")\n"
+        fi
     else
         printf " Авториз.:   $(colorize cyan ВЫКЛ)\n"
     fi
@@ -611,10 +622,19 @@ installTorrServer() {
         fi
 
         # Авторизация
-        local creds
-        creds=$(getAuthCredentials)
-        if [ -n "$creds" ]; then
-            printf " Авториз.:   $(colorize yellow ВКЛ) (логин: %s)\n" "${creds%%:*}"
+        if isAuthEnabled; then
+            local creds
+            creds=$(getAuthCredentials)
+            if [ -n "$creds" ]; then
+                local authUser authPass
+                authUser="${creds%%:*}"
+                authPass="${creds#*:}"
+                printf " Авториз.:   $(colorize yellow ВКЛ)\n"
+                printf " Логин:      %s\n" "$authUser"
+                printf " Пароль:     %s\n" "$authPass"
+            else
+                printf " Авториз.:   $(colorize yellow ВКЛ) $(colorize red "(accs.db не найден!)")\n"
+            fi
         else
             printf " Авториз.:   $(colorize cyan ВЫКЛ)\n"
         fi
