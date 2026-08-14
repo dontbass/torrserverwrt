@@ -8,6 +8,7 @@
 [![Shell](https://img.shields.io/badge/shell-POSIX%20sh-89e051.svg)](#)
 [![OpenWrt](https://img.shields.io/badge/OpenWrt-19.07%2B-00b5e2.svg)](https://openwrt.org)
 [![TorrServer](https://img.shields.io/badge/TorrServer-latest-e03030.svg)](https://github.com/YouROK/TorrServer/releases/latest)
+[![Release](https://img.shields.io/github/v/release/dontbass/torrserverwrt?color=e03030&label=release)](https://github.com/dontbass/torrserverwrt/releases/latest)
 [![GitHub stars](https://img.shields.io/github/stars/dontbass/torrserverwrt?style=flat&color=yellow)](https://github.com/dontbass/torrserverwrt/stargazers)
 
 [English](#english) · [Русский](#русский)
