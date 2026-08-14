@@ -568,6 +568,118 @@ setupAutoupdate() {
 }
 
 installTorrServer() {
+    local arch
+    arch=$(detectArch)
+    if [ -z "$arch" ]; then
+        printf " - Неизвестная архитектура: %s\n" "$(uname -m)"
+        printf "   Варианты: linux-amd64, linux-arm64, linux-arm7, linux-arm5,\n"
+        printf "             linux-mips, linux-mipsle, linux-mips64, linux-386, linux-riscv64\n"
+        printf " Введите архитектуру: "
+        read -r arch </dev/tty
+        [ -z "$arch" ] && exit 1
+    fi
+
+    # === Уже установлен — показываем статус и меню управления ===
+    if [ -f "$dirInstall/TorrServer-${arch}" ]; then
+        local curVersion latestVersion ip port
+        curVersion=$(getInstalledVersion)
+        ip=$(getIP)
+        port=$(getServicePort)
+        [ -z "$port" ] && port="8090"
+        [ -z "$ip" ]   && ip="<IP роутера>"
+
+        printf "\n"
+        printf "=============================================================\n"
+        printf " TorrServer уже установлен\n"
+        printf "=============================================================\n"
+        printf " Версия:     $(colorize cyan "%s")\n" "$curVersion"
+        printf " Архитектура: %s\n" "$arch"
+        if isRunning; then
+            printf " Служба:     $(colorize green ЗАПУЩЕНА)\n"
+            printf " Адрес:      http://%s:%s\n" "$ip" "$port"
+        else
+            printf " Служба:     $(colorize red ОСТАНОВЛЕНА)\n"
+        fi
+
+        # Проверяем обновление
+        printf " Обновление:  "
+        latestVersion=$(getLatestRelease)
+        if [ -n "$latestVersion" ] && [ "$latestVersion" != "$curVersion" ]; then
+            printf "$(colorize yellow "доступно %s")\n" "$latestVersion"
+        else
+            printf "$(colorize green "не требуется")\n"
+        fi
+
+        # Авторизация
+        local creds
+        creds=$(getAuthCredentials)
+        if [ -n "$creds" ]; then
+            printf " Авториз.:   $(colorize yellow ВКЛ) (логин: %s)\n" "${creds%%:*}"
+        else
+            printf " Авториз.:   $(colorize cyan ВЫКЛ)\n"
+        fi
+
+        # Автообновление
+        if crontab -l 2>/dev/null | grep -q "torrserver.*update\|update.*torrserver"; then
+            printf " Автообн.:   $(colorize green ВКЛ)\n"
+        else
+            printf " Автообн.:   $(colorize cyan ВЫКЛ)\n"
+        fi
+
+        printf "=============================================================\n"
+        printf "\n"
+        printf " Что сделать?\n"
+        printf "  $(colorize yellow u) — обновить до последней версии\n"
+        printf "  $(colorize yellow p) — сменить порт\n"
+        printf "  $(colorize yellow a) — настроить авторизацию\n"
+        printf "  $(colorize yellow c) — автообновление (cron)\n"
+        printf "  $(colorize green  r) — перезапустить службу\n"
+        printf "  $(colorize red    d) — удалить TorrServer\n"
+        printf "  $(colorize cyan   n) — назад\n"
+        printf "\n"
+
+        while true; do
+            printf " Выбор: "
+            read -r mgmt </dev/tty
+            case $mgmt in
+                [UuУу]*)
+                    initialCheck
+                    UpdateVersion
+                    break
+                    ;;
+                [PpПп]*)
+                    changePort
+                    break
+                    ;;
+                [AaАа]*)
+                    changeAuth
+                    break
+                    ;;
+                [CcСс]*)
+                    setupAutoupdate
+                    break
+                    ;;
+                [RrРр]*)
+                    restartService
+                    break
+                    ;;
+                [DdУу]*)
+                    initialCheck
+                    uninstall
+                    break
+                    ;;
+                [NnНн]*)
+                    break
+                    ;;
+                *)
+                    printf " Введите u, p, a, c, r, d или n\n"
+                    ;;
+            esac
+        done
+        return
+    fi
+
+    # === Не установлен — полная установка ===
     printf "\n"
     printf "=============================================================\n"
     printf " Установка TorrServer\n"
@@ -584,26 +696,7 @@ installTorrServer() {
     read -r answer_warn </dev/tty
     [ "$answer_warn" != "${answer_warn#[YyДд]}" ] || { printf " Установка отменена\n\n"; return 0; }
     printf "\n"
-
-    local arch
-    arch=$(detectArch)
-    if [ -z "$arch" ]; then
-        printf " - Неизвестная архитектура: %s\n" "$(uname -m)"
-        printf "   Варианты: linux-amd64, linux-arm64, linux-arm7, linux-arm5,\n"
-        printf "             linux-mips, linux-mipsle, linux-mips64, linux-386, linux-riscv64\n"
-        printf " Введите архитектуру: "
-        read -r arch </dev/tty
-        [ -z "$arch" ] && exit 1
-    fi
     printf " Архитектура: %s\n" "$arch"
-
-    if [ -f "$dirInstall/TorrServer-${arch}" ]; then
-        printf " TorrServer уже установлен (версия: %s)\n" "$(getInstalledVersion)"
-        printf " Обновить до последней версии? (%s/%s) " "$(colorize green Y)es" "$(colorize yellow N)o"
-        read -r answer_up </dev/tty
-        [ "$answer_up" != "${answer_up#[YyДд]}" ] && UpdateVersion
-        return
-    fi
 
     checkDiskSpace
 
