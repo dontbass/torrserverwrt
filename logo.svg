@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 200" width="780" height="200">
+  <rect width="780" height="200" fill="#0d1117" rx="10"/>
+  <text font-family="'Courier New', Courier, monospace" font-size="14" font-weight="bold" xml:space="preserve">
+    <!-- TORR - красный -->
+    <tspan fill="#e03030" x="20" dy="0">
+      <tspan x="20" dy="20">  ████████╗ ██████╗ ██████╗ ██████╗ </tspan>
+      <tspan x="20" dy="17">     ██╔══╝██╔═══██╗██╔══██╗██╔══██╗</tspan>
+      <tspan x="20" dy="17">     ██║   ██║   ██║██████╔╝██████╔╝</tspan>
+      <tspan x="20" dy="17">     ██║   ██║   ██║██╔══██╗██╔══██╗</tspan>
+      <tspan x="20" dy="17">     ██║   ╚██████╔╝██║  ██║██║  ██║</tspan>
+      <tspan x="20" dy="17">     ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝</tspan>
+    </tspan>
+    <!-- SERVER - синий -->
+    <tspan fill="#1a5fb4" x="20">
+      <tspan x="20" dy="17">  ███████╗███████╗██████╗ ██╗   ██╗███████╗██████╗ </tspan>
+      <tspan x="20" dy="17">  ██╔════╝██╔════╝██╔══██╗██║   ██║██╔════╝██╔══██╗</tspan>
+      <tspan x="20" dy="17">  ███████╗█████╗  ██████╔╝██║   ██║█████╗  ██████╔╝</tspan>
+      <tspan x="20" dy="17">  ╚════██║██╔══╝  ██╔══██╗╚██╗ ██╔╝██╔══╝  ██╔══██╗</tspan>
+      <tspan x="20" dy="17">  ███████║███████╗██║  ██║ ╚████╔╝ ███████╗██║  ██║</tspan>
+      <tspan x="20" dy="17">  ╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝</tspan>
+    </tspan>
+    <!-- подпись -->
+    <tspan fill="#6a7280" x="20" dy="20">                        for OpenWrt / FriendlyWrt</tspan>
+  </text>
+</svg>
