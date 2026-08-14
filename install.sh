@@ -11,6 +11,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 colorize() {
@@ -29,6 +30,32 @@ colorize() {
 
 isRoot() {
     [ "$(id -u)" -eq 0 ]
+}
+
+printLogo() {
+    if [ "$NO_COLOR" -eq 0 ]; then
+        printf "${RED}"
+    fi
+    printf "  ████████╗ ██████╗ ██████╗ ██████╗ \n"
+    printf "     ██╔══╝██╔═══██╗██╔══██╗██╔══██╗\n"
+    printf "     ██║   ██║   ██║██████╔╝██████╔╝\n"
+    printf "     ██║   ██║   ██║██╔══██╗██╔══██╗\n"
+    printf "     ██║   ╚██████╔╝██║  ██║██║  ██║\n"
+    printf "     ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝\n"
+    if [ "$NO_COLOR" -eq 0 ]; then
+        printf "${BLUE}"
+    fi
+    printf "  ███████╗███████╗██████╗ ██╗   ██╗███████╗██████╗ \n"
+    printf "  ██╔════╝██╔════╝██╔══██╗██║   ██║██╔════╝██╔══██╗\n"
+    printf "  ███████╗█████╗  ██████╔╝██║   ██║█████╗  ██████╔╝\n"
+    printf "  ╚════██║██╔══╝  ██╔══██╗╚██╗ ██╔╝██╔══╝  ██╔══██╗\n"
+    printf "  ███████║███████╗██║  ██║ ╚████╔╝ ███████╗██║  ██║\n"
+    printf "  ╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝\n"
+    if [ "$NO_COLOR" -eq 0 ]; then
+        printf "${NC}"
+    fi
+    printf "                        for OpenWrt / FriendlyWrt\n"
+    printf "\n"
 }
 
 detectArch() {
@@ -771,9 +798,7 @@ esac
 
 # === Интерактивное меню ===
 printf "\n"
-printf "=============================================================\n"
-printf " TorrServer — установщик для OpenWrt / FriendlyWrt\n"
-printf "=============================================================\n"
+printLogo
 
 if checkInstalled 2>/dev/null; then
     printf " Версия:  %s\n" "$(getInstalledVersion)"
