@@ -586,22 +586,20 @@ downloadTorrServer() {
     local tmpFile="$dirInstall/${binName}.tmp"
 
     # Проверяем свободное место перед скачиванием
-    # Нужно ~80 МБ для .tmp + старый бинарь остаётся до mv
     # При обновлении оба файла существуют одновременно → нужно ~160 МБ
     local required=160
     local existing=0
     [ -f "$dirInstall/$binName" ] && existing=$(du -m "$dirInstall/$binName" 2>/dev/null | awk '{print $1}')
-    # Если старого файла нет (первая установка) — нужно только 80 МБ
     [ "$existing" -eq 0 ] 2>/dev/null && required=80
     local available
     available=$(df "$dirInstall" 2>/dev/null | awk 'NR==2{print int($4/1024)}')
     [ -z "$available" ] && available=$(df /opt 2>/dev/null | awk 'NR==2{print int($4/1024)}')
     [ -z "$available" ] && available=$(df / | awk 'NR==2{print int($4/1024)}')
+
     if [ "$available" -lt "$required" ] 2>/dev/null; then
         printf "\n"
         t disk_warn "$available" "$required"
         if [ "$existing" -gt 0 ]; then
-            # При обновлении — предложить удалить старый бинарь заранее
             if [ "$LANG_CODE" = "en" ]; then
                 printf " $(colorize yellow TIP) Remove old binary first to free ~%s MB? " "$existing"
             else
@@ -610,13 +608,17 @@ downloadTorrServer() {
             t yes_no
             read -r ans </dev/tty
             if [ "$ans" != "${ans#[YyДд]}" ]; then
+                # Сохраняем версию удаляемого бинаря на случай провала скачивания
+                local savedVersion
+                savedVersion=$(getInstalledVersion)
+                printf "%s" "$savedVersion" > "$dirInstall/version.bak"
+
                 rm -f "$dirInstall/$binName"
                 if [ "$LANG_CODE" = "en" ]; then
                     printf " - Old binary removed, proceeding...\n"
                 else
                     printf " - Старый бинарь удалён, продолжаем...\n"
                 fi
-                # Пересчитываем после удаления
                 available=$(df "$dirInstall" 2>/dev/null | awk 'NR==2{print int($4/1024)}')
                 if [ "$available" -lt 80 ] 2>/dev/null; then
                     t disk_warn "$available" "80"
@@ -632,18 +634,78 @@ downloadTorrServer() {
 
     t downloading "$version" "$arch"
     if ! curl -L --progress-bar -o "$tmpFile" "$urlBin"; then
-        t dl_fail; rm -f "$tmpFile"; return 1
+        t dl_fail
+        rm -f "$tmpFile"
+        # Бинарь был удалён для освобождения места — пробуем восстановить
+        _recoverBinary "$arch"
+        return 1
     fi
     local filesize
     filesize=$(wc -c < "$tmpFile" 2>/dev/null || echo 0)
     if [ "$filesize" -lt 1000000 ]; then
-        t dl_small "$filesize"; rm -f "$tmpFile"; return 1
+        t dl_small "$filesize"
+        rm -f "$tmpFile"
+        _recoverBinary "$arch"
+        return 1
     fi
     chmod +x "$tmpFile"
     mv -f "$tmpFile" "$dirInstall/$binName"
     printf "%s" "$version" > "$dirInstall/version"
     printf "%s" "$binName" > "$dirInstall/binary"
+    rm -f "$dirInstall/version.bak"
     t dl_done
+}
+
+# Попытка восстановить бинарь после неудачного скачивания
+_recoverBinary() {
+    local arch="$1"
+    local binName="TorrServer-${arch}"
+    local bakVersion=""
+
+    # Проверяем есть ли сохранённая версия (значит бинарь был удалён)
+    [ -f "$dirInstall/version.bak" ] || return 0
+    bakVersion=$(cat "$dirInstall/version.bak")
+    [ -z "$bakVersion" ] && return 0
+
+    if [ "$LANG_CODE" = "en" ]; then
+        printf "\n $(colorize red "!") Binary was removed and download failed — system is broken!\n"
+        printf "   Attempting to restore version %s...\n" "$bakVersion"
+    else
+        printf "\n $(colorize red "!") Бинарь был удалён, а скачивание прервалось — система не работает!\n"
+        printf "   Пытаемся восстановить версию %s...\n" "$bakVersion"
+    fi
+
+    local urlBin="https://github.com/YouROK/TorrServer/releases/download/${bakVersion}/${binName}"
+    local tmpFile="$dirInstall/${binName}.tmp"
+
+    if curl -L --progress-bar -o "$tmpFile" "$urlBin" 2>/dev/null; then
+        local filesize
+        filesize=$(wc -c < "$tmpFile" 2>/dev/null || echo 0)
+        if [ "$filesize" -ge 1000000 ]; then
+            chmod +x "$tmpFile"
+            mv -f "$tmpFile" "$dirInstall/$binName"
+            printf "%s" "$bakVersion" > "$dirInstall/version"
+            printf "%s" "$binName" > "$dirInstall/binary"
+            rm -f "$dirInstall/version.bak"
+            /etc/init.d/$serviceName start 2>/dev/null
+            if [ "$LANG_CODE" = "en" ]; then
+                printf " ✓ Restored version %s — service started\n" "$bakVersion"
+            else
+                printf " ✓ Восстановлена версия %s — служба запущена\n" "$bakVersion"
+            fi
+            return 0
+        fi
+    fi
+
+    rm -f "$tmpFile"
+    rm -f "$dirInstall/version.bak"
+    if [ "$LANG_CODE" = "en" ]; then
+        printf " $(colorize red "✗") Recovery failed. To reinstall run:\n"
+        printf "   sh %s -i\n\n" "$scriptname"
+    else
+        printf " $(colorize red "✗") Восстановление не удалось. Для переустановки выполните:\n"
+        printf "   sh %s -i\n\n" "$scriptname"
+    fi
 }
 
 writeInitScript() {
