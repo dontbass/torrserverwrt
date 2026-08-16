@@ -1,4 +1,12 @@
-#Requires -Version 5.1
+# TorrServer Installer for Windows
+# Works on PowerShell 5.1+ (built-in on Windows 10/11)
+# Run via: install.bat  OR  powershell -ExecutionPolicy Bypass -File install.ps1
+
+# Обходим политику выполнения для текущего процесса (не меняет системные настройки)
+try {
+    Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
+} catch {}
+
 <#
 .SYNOPSIS
     TorrServer installer for Windows
@@ -544,14 +552,7 @@ Examples:
 if (-not (Test-Admin)) {
     Write-Color " [ERR] Run as Administrator!" "red"
     Write-Host " Right-click PowerShell → Run as Administrator"
-    exit 1
-}
-
-# Проверка политики выполнения
-$policy = Get-ExecutionPolicy
-if ($policy -eq "Restricted") {
-    Write-Warn "PowerShell execution policy is Restricted"
-    Write-Host " Run: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser"
+    Write-Host " Or use install.bat (it handles this automatically)"
     exit 1
 }
 
