@@ -36,9 +36,15 @@ TorrServer — HTTP-сервер для **стриминга торрентов 
 curl -sSL https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.sh | sh
 ```
 
-**Windows (PowerShell от администратора):**
+**Windows — самый простой способ (рекомендуется):**
+
+Скачать и запустить двойным кликом → **[install.bat](https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.bat)**
+
+Bat-файл автоматически обходит политику выполнения скриптов и не требует никаких настроек.
+
+**Windows — через PowerShell (от имени администратора):**
 ```powershell
-irm https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.ps1 | iex
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.ps1 | iex"
 ```
 
 Или скачать вручную:
@@ -183,9 +189,15 @@ This script automates installation, configuration, and maintenance of TorrServer
 curl -sSL https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.sh | sh
 ```
 
-**Windows (PowerShell as Administrator):**
+**Windows — easiest way (recommended):**
+
+Download and double-click → **[install.bat](https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.bat)**
+
+The bat file automatically bypasses PowerShell execution policy — no configuration needed.
+
+**Windows — via PowerShell (as Administrator):**
 ```powershell
-irm https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.ps1 | iex
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.ps1 | iex"
 ```
 
 After installation the web UI is available at `http://<IP>:8090`
