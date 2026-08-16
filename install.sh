@@ -585,6 +585,51 @@ downloadTorrServer() {
     local urlBin="https://github.com/YouROK/TorrServer/releases/download/${version}/${binName}"
     local tmpFile="$dirInstall/${binName}.tmp"
 
+    # Проверяем свободное место перед скачиванием
+    # Нужно ~80 МБ для .tmp + старый бинарь остаётся до mv
+    # При обновлении оба файла существуют одновременно → нужно ~160 МБ
+    local required=160
+    local existing=0
+    [ -f "$dirInstall/$binName" ] && existing=$(du -m "$dirInstall/$binName" 2>/dev/null | awk '{print $1}')
+    # Если старого файла нет (первая установка) — нужно только 80 МБ
+    [ "$existing" -eq 0 ] 2>/dev/null && required=80
+    local available
+    available=$(df "$dirInstall" 2>/dev/null | awk 'NR==2{print int($4/1024)}')
+    [ -z "$available" ] && available=$(df /opt 2>/dev/null | awk 'NR==2{print int($4/1024)}')
+    [ -z "$available" ] && available=$(df / | awk 'NR==2{print int($4/1024)}')
+    if [ "$available" -lt "$required" ] 2>/dev/null; then
+        printf "\n"
+        t disk_warn "$available" "$required"
+        if [ "$existing" -gt 0 ]; then
+            # При обновлении — предложить удалить старый бинарь заранее
+            if [ "$LANG_CODE" = "en" ]; then
+                printf " $(colorize yellow TIP) Remove old binary first to free ~%s MB? " "$existing"
+            else
+                printf " $(colorize yellow СОВЕТ) Удалить старый бинарь чтобы освободить ~%s МБ? " "$existing"
+            fi
+            t yes_no
+            read -r ans </dev/tty
+            if [ "$ans" != "${ans#[YyДд]}" ]; then
+                rm -f "$dirInstall/$binName"
+                if [ "$LANG_CODE" = "en" ]; then
+                    printf " - Old binary removed, proceeding...\n"
+                else
+                    printf " - Старый бинарь удалён, продолжаем...\n"
+                fi
+                # Пересчитываем после удаления
+                available=$(df "$dirInstall" 2>/dev/null | awk 'NR==2{print int($4/1024)}')
+                if [ "$available" -lt 80 ] 2>/dev/null; then
+                    t disk_warn "$available" "80"
+                    t dl_fail; return 1
+                fi
+            else
+                t dl_fail; return 1
+            fi
+        else
+            t dl_fail; return 1
+        fi
+    fi
+
     t downloading "$version" "$arch"
     if ! curl -L --progress-bar -o "$tmpFile" "$urlBin"; then
         t dl_fail; rm -f "$tmpFile"; return 1
