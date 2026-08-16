@@ -31,18 +31,38 @@ TorrServer — HTTP-сервер для **стриминга торрентов 
 
 ### Быстрый старт
 
+**Linux (OpenWrt / Ubuntu / Debian / Arch / Alpine):**
 ```sh
 curl -sSL https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.sh | sh
 ```
 
-Или вручную:
-
-```sh
-curl -O https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.sh
-sh install.sh -i
+**Windows (PowerShell от администратора):**
+```powershell
+irm https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.ps1 | iex
 ```
 
-После установки веб-интерфейс доступен по адресу `http://<IP роутера>:8090`
+Или скачать вручную:
+```sh
+# Linux
+curl -O https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.sh
+sh install.sh -i
+
+# Windows (PowerShell)
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.ps1 -OutFile install.ps1
+.\install.ps1
+```
+
+После установки веб-интерфейс доступен по адресу `http://<IP>:8090`
+
+### Поддерживаемые платформы
+
+| ОС | Init-система | Установщик |
+|---|---|---|
+| OpenWrt / FriendlyWrt | procd | `install.sh` |
+| Ubuntu / Debian / Raspberry Pi OS | systemd | `install.sh` |
+| Arch Linux / Manjaro | systemd | `install.sh` |
+| Alpine Linux | OpenRC | `install.sh` |
+| Windows 10/11 / Server 2016+ | Task Scheduler / NSSM | `install.ps1` |
 
 ### Возможности
 
@@ -158,18 +178,27 @@ This script automates installation, configuration, and maintenance of TorrServer
 
 ### Quick start
 
+**Linux (OpenWrt / Ubuntu / Debian / Arch / Alpine):**
 ```sh
 curl -sSL https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.sh | sh
 ```
 
-Or manually:
-
-```sh
-curl -O https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.sh
-sh install.sh -i
+**Windows (PowerShell as Administrator):**
+```powershell
+irm https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.ps1 | iex
 ```
 
-After installation the web UI is available at `http://<router IP>:8090`
+After installation the web UI is available at `http://<IP>:8090`
+
+### Supported platforms
+
+| OS | Init system | Installer |
+|---|---|---|
+| OpenWrt / FriendlyWrt | procd | `install.sh` |
+| Ubuntu / Debian / Raspberry Pi OS | systemd | `install.sh` |
+| Arch Linux / Manjaro | systemd | `install.sh` |
+| Alpine Linux | OpenRC | `install.sh` |
+| Windows 10/11 / Server 2016+ | Task Scheduler / NSSM | `install.ps1` |
 
 ### Features
 
