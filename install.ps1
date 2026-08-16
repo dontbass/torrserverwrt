@@ -46,7 +46,8 @@ function Write-Color {
             blue   = "Blue"
             white  = "White"
         }
-        Write-Host $Text -ForegroundColor ($map[$Color] ?? "White")
+        $fc = if ($map.ContainsKey($Color)) { $map[$Color] } else { "White" }
+        Write-Host $Text -ForegroundColor $fc
     }
 }
 
@@ -136,7 +137,7 @@ function Get-LocalIP {
         $ip = (Get-NetIPAddress -AddressFamily IPv4 |
                Where-Object { $_.IPAddress -notmatch '^127\.' -and $_.PrefixOrigin -ne 'WellKnown' } |
                Select-Object -First 1).IPAddress
-        return $ip ?? "localhost"
+        if ($ip) { return $ip } else { return "localhost" }
     } catch { return "localhost" }
 }
 
@@ -173,7 +174,8 @@ function Test-AuthEnabled {
 function Register-TorrServerTask {
     param([string]$Arguments)
     # Предпочитаем Windows Service (NSSM), fallback — Scheduled Task
-    $nssmPath = (Get-Command nssm -ErrorAction SilentlyContinue)?.Source
+    $nssmCmd = Get-Command nssm -ErrorAction SilentlyContinue
+    $nssmPath = if ($nssmCmd) { $nssmCmd.Source } else { $null }
 
     if ($nssmPath) {
         Write-Info "Installing as Windows Service (NSSM)..."
@@ -213,7 +215,8 @@ function Stop-TorrServer {
 
 function Remove-TorrServerService {
     Stop-TorrServer
-    $nssmPath = (Get-Command nssm -ErrorAction SilentlyContinue)?.Source
+    $nssmCmd2 = Get-Command nssm -ErrorAction SilentlyContinue
+    $nssmPath = if ($nssmCmd2) { $nssmCmd2.Source } else { $null }
     if ($nssmPath) {
         & nssm remove $ServiceName confirm 2>$null | Out-Null
     } else {
