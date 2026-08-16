@@ -122,8 +122,8 @@ t() {
     local str=""
     case "${LANG_CODE}:${key}" in
         # --- лого ---
-        en:logo_sub)    str="                        for OpenWrt / FriendlyWrt" ;;
-        ru:logo_sub)    str="                        для OpenWrt / FriendlyWrt" ;;
+        en:logo_sub)    str="         OpenWrt · FriendlyWrt · Ubuntu · Debian · Arch · Alpine · Windows" ;;
+        ru:logo_sub)    str="      OpenWrt · FriendlyWrt · Ubuntu · Debian · Arch · Alpine · Windows" ;;
         # --- общие ---
         en:yes_no)      str="(%s/%s) " ; printf "$str" "$(colorize green Y)es" "$(colorize yellow N)o" ; return ;;
         ru:yes_no)      str="(%s/%s) " ; printf "$str" "$(colorize green Y)es" "$(colorize yellow N)o" ; return ;;
@@ -535,7 +535,9 @@ printLogo() {
     printf "  ███████║███████╗██║  ██║ ╚████╔╝ ███████╗██║  ██║\n"
     printf "  ╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝\n"
     if [ "$NO_COLOR" -eq 0 ]; then printf "${NC}"; fi
-    t logo_sub; printf "\n\n"
+    printf "  ─────────────────────────────────────────────────────\n"
+    t logo_sub; printf "\n"
+    printf "\n"
 }
 
 # ============================================================
