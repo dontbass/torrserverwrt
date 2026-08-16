@@ -114,7 +114,6 @@ Lampa → Настройки → TorrServer → Адрес: http://<IP роут�
 | Cudy TR3000, GL.iNet MT3000 | MT7981B | `aarch64` | `linux-arm64` |
 | Raspberry Pi 3/4 (64-bit) | BCM2837/2711 | `aarch64` | `linux-arm64` |
 | Raspberry Pi 2/3 (32-bit) | BCM2836/2837 | `armv7l` | `linux-arm7` |
-| Beeline SmartBox TURBO+ | MT7621 | `mipsel` | `linux-mipsle` |
 | GL.iNet GL-AR750 | QCA9563 | `mips` | `linux-mips` |
 | PC-роутер x86/x86_64 | — | `x86_64` | `linux-amd64` |
 | Прочие | — | — | ручной ввод |
@@ -242,7 +241,6 @@ Press «Check» — the status should turn green «Connected».
 | Cudy TR3000, GL.iNet MT3000 | MT7981B | `aarch64` | `linux-arm64` |
 | Raspberry Pi 3/4 (64-bit) | BCM2837/2711 | `aarch64` | `linux-arm64` |
 | Raspberry Pi 2/3 (32-bit) | BCM2836/2837 | `armv7l` | `linux-arm7` |
-| Beeline SmartBox TURBO+ | MT7621 | `mipsel` | `linux-mipsle` |
 | GL.iNet GL-AR750 | QCA9563 | `mips` | `linux-mips` |
 | x86/x86_64 PC router | — | `x86_64` | `linux-amd64` |
 | Others | — | — | manual input |
