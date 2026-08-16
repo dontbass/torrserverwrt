@@ -32,6 +32,56 @@ colorize() {
 }
 
 # ============================================================
+# ОПРЕДЕЛЕНИЕ ПЛАТФОРМЫ
+# ============================================================
+
+OS_TYPE=""
+OS_NAME=""
+
+detectOS() {
+    if [ -f /etc/openwrt_release ]; then
+        OS_TYPE="openwrt"
+        OS_NAME="OpenWrt"
+        return
+    fi
+    if [ -f /etc/alpine-release ]; then
+        OS_TYPE="alpine"
+        OS_NAME="Alpine Linux"
+        return
+    fi
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS_NAME="${PRETTY_NAME:-$NAME}"
+        case "$ID" in
+            ubuntu|debian|raspbian|linuxmint|pop)
+                OS_TYPE="debian" ;;
+            arch|manjaro|endeavouros|garuda)
+                OS_TYPE="arch" ;;
+            fedora|rhel|centos|rocky|almalinux)
+                OS_TYPE="rhel" ;;
+            opensuse*|sles)
+                OS_TYPE="suse" ;;
+            *)
+                # Проверяем по ID_LIKE
+                case "$ID_LIKE" in
+                    *debian*|*ubuntu*) OS_TYPE="debian" ;;
+                    *arch*)            OS_TYPE="arch" ;;
+                    *rhel*|*fedora*)   OS_TYPE="rhel" ;;
+                    *)                 OS_TYPE="unknown" ;;
+                esac
+                ;;
+        esac
+        return
+    fi
+    OS_TYPE="unknown"
+    OS_NAME="Unknown Linux"
+}
+
+hasSystemd() {
+    command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1
+}
+
+# ============================================================
 # ЛОКАЛИЗАЦИЯ
 # ============================================================
 
@@ -293,6 +343,17 @@ t() {
         ru:unknown_cmd) str=" Неизвестная команда: %s\n" ;;
         en:good_luck)   str=" Good luck!\n\n" ;;
         ru:good_luck)   str=" Удачи!\n\n" ;;
+        # --- платформа ---
+        en:os_detected) str=" Platform: %s\n" ;;
+        ru:os_detected) str=" Платформа: %s\n" ;;
+        en:os_unknown)  str=" $(colorize yellow WARN) Unknown platform, trying generic Linux init\n" ;;
+        ru:os_unknown)  str=" $(colorize yellow WARN) Неизвестная платформа, пробуем стандартный Linux init\n" ;;
+        en:svc_enabled) str=" - Service enabled and started\n" ;;
+        ru:svc_enabled) str=" - Служба включена и запущена\n" ;;
+        en:log_hint_systemd) str=" Logs: journalctl -u torrserver -f\n" ;;
+        ru:log_hint_systemd) str=" Логи: journalctl -u torrserver -f\n" ;;
+        en:log_hint_openwrt) str=" Logs: logread | grep torrserver\n" ;;
+        ru:log_hint_openwrt) str=" Логи: logread | grep torrserver\n" ;;
         *) str="[?:${key}]" ;;
     esac
     # shellcheck disable=SC2059
@@ -325,10 +386,17 @@ addUser() {
     if grep -q "^$username:" /etc/passwd 2>/dev/null; then
         t user_exists "$username"; return 0
     fi
-    local group="nogroup"
-    grep -q "^nogroup:" /etc/group 2>/dev/null || group="nobody"
-    adduser -D -H -h "$dirInstall" -s /bin/false -G "$group" "$username" 2>/dev/null
-    if [ $? -eq 0 ]; then
+    case "$OS_TYPE" in
+        openwrt|alpine)
+            local group="nogroup"
+            grep -q "^nogroup:" /etc/group 2>/dev/null || group="nobody"
+            adduser -D -H -h "$dirInstall" -s /bin/false -G "$group" "$username" 2>/dev/null
+            ;;
+        debian|arch|rhel|suse|*)
+            useradd -r -s /bin/false -d "$dirInstall" -M "$username" 2>/dev/null
+            ;;
+    esac
+    if grep -q "^$username:" /etc/passwd 2>/dev/null; then
         chmod 755 "$dirInstall"
         t user_added "$username"
     else
@@ -340,7 +408,11 @@ addUser() {
 delUser() {
     [ "$username" = "root" ] && return 0
     grep -q "^$username:" /etc/passwd 2>/dev/null || return 0
-    deluser "$username" 2>/dev/null && t user_deleted "$username"
+    case "$OS_TYPE" in
+        openwrt|alpine) deluser "$username" 2>/dev/null ;;
+        *)              userdel "$username" 2>/dev/null ;;
+    esac
+    t user_deleted "$username"
 }
 
 getIP() {
@@ -371,7 +443,13 @@ getInstalledArch() {
 }
 
 getServicePort() {
-    grep -o '\-\-port [0-9]*' /etc/init.d/$serviceName 2>/dev/null | awk '{print $2}' | head -1
+    local f=""
+    if [ "$OS_TYPE" = "openwrt" ] || [ "$OS_TYPE" = "alpine" ]; then
+        f="/etc/init.d/$serviceName"
+    elif hasSystemd; then
+        f="/etc/systemd/system/${serviceName}.service"
+    fi
+    [ -f "$f" ] && grep -o '\-\-port [0-9]*' "$f" 2>/dev/null | awk '{print $2}' | head -1
 }
 
 getAuthCredentials() {
@@ -384,7 +462,13 @@ getAuthCredentials() {
 }
 
 isAuthEnabled() {
-    grep -q '\-\-httpauth' /etc/init.d/$serviceName 2>/dev/null
+    local f=""
+    if [ "$OS_TYPE" = "openwrt" ] || [ "$OS_TYPE" = "alpine" ]; then
+        f="/etc/init.d/$serviceName"
+    elif hasSystemd; then
+        f="/etc/systemd/system/${serviceName}.service"
+    fi
+    [ -f "$f" ] && grep -q '\-\-httpauth' "$f" 2>/dev/null
 }
 
 checkInstalled() {
@@ -428,7 +512,11 @@ initialCheck() {
 
 isRunning() {
     local arch; arch=$(getInstalledArch)
-    pidof "TorrServer-${arch}" >/dev/null 2>&1
+    if [ "$OS_TYPE" = "openwrt" ] || ! hasSystemd; then
+        pidof "TorrServer-${arch}" >/dev/null 2>&1
+    else
+        systemctl is-active --quiet "$serviceName" 2>/dev/null
+    fi
 }
 
 printLogo() {
@@ -479,9 +567,7 @@ helpUsage() {
 }
 
 cleanup() {
-    /etc/init.d/$serviceName stop 2>/dev/null
-    /etc/init.d/$serviceName disable 2>/dev/null
-    rm -f /etc/init.d/$serviceName
+    svcRemove
     rm -rf "$dirInstall"
     delUser
 }
@@ -687,7 +773,7 @@ _recoverBinary() {
             printf "%s" "$bakVersion" > "$dirInstall/version"
             printf "%s" "$binName" > "$dirInstall/binary"
             rm -f "$dirInstall/version.bak"
-            /etc/init.d/$serviceName start 2>/dev/null
+            svcStart 2>/dev/null
             if [ "$LANG_CODE" = "en" ]; then
                 printf " ✓ Restored version %s — service started\n" "$bakVersion"
             else
@@ -710,7 +796,10 @@ _recoverBinary() {
 
 writeInitScript() {
     local binName="$1" authOptions="$2"
-    cat > /etc/init.d/$serviceName << EOF
+
+    if [ "$OS_TYPE" = "openwrt" ]; then
+        # procd init script
+        cat > /etc/init.d/$serviceName << EOF
 #!/bin/sh /etc/rc.common
 
 START=99
@@ -737,7 +826,130 @@ reload_service() {
     stop; sleep 1; start
 }
 EOF
-    chmod +x /etc/init.d/$serviceName
+        chmod +x /etc/init.d/$serviceName
+
+    elif hasSystemd; then
+        # systemd service
+        cat > /etc/systemd/system/${serviceName}.service << EOF
+[Unit]
+Description=TorrServer — torrent streaming server
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$username
+ExecStart=$dirInstall/$binName $authOptions
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload
+
+    elif [ "$OS_TYPE" = "alpine" ]; then
+        # OpenRC init script
+        cat > /etc/init.d/$serviceName << EOF
+#!/sbin/openrc-run
+
+description="TorrServer — torrent streaming server"
+command="$dirInstall/$binName"
+command_args="$authOptions"
+command_user="$username"
+pidfile="/run/\${RC_SVCNAME}.pid"
+command_background=true
+output_log="/var/log/torrserver.log"
+error_log="/var/log/torrserver.log"
+
+depend() {
+    need net
+}
+EOF
+        chmod +x /etc/init.d/$serviceName
+    fi
+}
+
+svcEnable() {
+    if [ "$OS_TYPE" = "openwrt" ]; then
+        /etc/init.d/$serviceName enable
+    elif hasSystemd; then
+        systemctl enable "$serviceName" 2>/dev/null
+    elif [ "$OS_TYPE" = "alpine" ]; then
+        rc-update add "$serviceName" default 2>/dev/null
+    fi
+}
+
+svcDisable() {
+    if [ "$OS_TYPE" = "openwrt" ]; then
+        /etc/init.d/$serviceName disable 2>/dev/null
+    elif hasSystemd; then
+        systemctl disable "$serviceName" 2>/dev/null
+    elif [ "$OS_TYPE" = "alpine" ]; then
+        rc-update del "$serviceName" default 2>/dev/null
+    fi
+}
+
+svcStart() {
+    if [ "$OS_TYPE" = "openwrt" ]; then
+        /etc/init.d/$serviceName start
+    elif hasSystemd; then
+        systemctl start "$serviceName"
+    elif [ "$OS_TYPE" = "alpine" ]; then
+        rc-service "$serviceName" start
+    else
+        local arch; arch=$(getInstalledArch)
+        local port; port=$(getServicePort); [ -z "$port" ] && port="8090"
+        "$dirInstall/TorrServer-${arch}" --port "$port" --path "$dirInstall" &
+    fi
+}
+
+svcStop() {
+    if [ "$OS_TYPE" = "openwrt" ]; then
+        /etc/init.d/$serviceName stop 2>/dev/null
+    elif hasSystemd; then
+        systemctl stop "$serviceName" 2>/dev/null
+    elif [ "$OS_TYPE" = "alpine" ]; then
+        rc-service "$serviceName" stop 2>/dev/null
+    else
+        local arch; arch=$(getInstalledArch)
+        killall "TorrServer-${arch}" 2>/dev/null
+    fi
+}
+
+svcRestart() {
+    if [ "$OS_TYPE" = "openwrt" ]; then
+        /etc/init.d/$serviceName restart 2>/dev/null
+    elif hasSystemd; then
+        systemctl restart "$serviceName"
+    elif [ "$OS_TYPE" = "alpine" ]; then
+        rc-service "$serviceName" restart
+    else
+        svcStop; sleep 1; svcStart
+    fi
+}
+
+svcRemove() {
+    svcStop
+    svcDisable
+    if [ "$OS_TYPE" = "openwrt" ]; then
+        rm -f /etc/init.d/$serviceName
+    elif hasSystemd; then
+        rm -f /etc/systemd/system/${serviceName}.service
+        systemctl daemon-reload 2>/dev/null
+    elif [ "$OS_TYPE" = "alpine" ]; then
+        rm -f /etc/init.d/$serviceName
+    fi
+}
+
+logHint() {
+    if [ "$OS_TYPE" = "openwrt" ]; then
+        t log_hint_openwrt
+    else
+        t log_hint_systemd
+    fi
 }
 
 changeAuth() {
@@ -778,8 +990,8 @@ changeAuth() {
     arch=$(getInstalledArch); binName="TorrServer-${arch}"
     writeInitScript "$binName" "$authOptions"
     t restarting
-    /etc/init.d/$serviceName stop 2>/dev/null; sleep 1
-    /etc/init.d/$serviceName start; sleep 1
+    svcStop; sleep 1
+    svcStart; sleep 1
     if isRunning; then t settings_applied; else t start_fail; fi
 }
 
@@ -803,8 +1015,8 @@ changePort() {
     arch=$(getInstalledArch); binName="TorrServer-${arch}"
     writeInitScript "$binName" "$authOptions"
     t restarting
-    /etc/init.d/$serviceName stop 2>/dev/null; sleep 1
-    /etc/init.d/$serviceName start; sleep 1
+    svcStop; sleep 1
+    svcStart; sleep 1
     if isRunning; then
         local ip; ip=$(getIP); [ -z "$ip" ] && ip="<IP>"
         t port_changed "$ip" "$newPort"
@@ -849,7 +1061,7 @@ setupAutoupdate() {
 
 restartService() {
     t restart_svc
-    /etc/init.d/$serviceName restart 2>/dev/null
+    svcRestart
     sleep 2
     if isRunning; then t svc_running; else t start_fail; fi
 }
@@ -864,14 +1076,14 @@ UpdateVersion() {
     if [ "$currentVersion" = "$latestVersion" ]; then t update_ok; return 0; fi
     local arch; arch=$(getInstalledArch)
     t stopping
-    /etc/init.d/$serviceName stop 2>/dev/null; sleep 1
+    svcStop; sleep 1
     killall "TorrServer-${arch}" 2>/dev/null; sleep 1
     downloadTorrServer "$latestVersion" "$arch" || {
         t rollback
-        /etc/init.d/$serviceName start 2>/dev/null
+        svcStart 2>/dev/null
         return 1
     }
-    /etc/init.d/$serviceName start; sleep 2
+    svcStart; sleep 2
     if isRunning; then t updated_ok "$latestVersion"
     else t updated_no_start "$latestVersion"; fi
 }
@@ -997,8 +1209,8 @@ installTorrServer() {
 
     local binName="TorrServer-${arch}"
     writeInitScript "$binName" "$authOptions"
-    /etc/init.d/$serviceName enable
-    /etc/init.d/$serviceName start
+    svcEnable
+    svcStart
     sleep 2
 
     t autoupd_prompt; t yes_no
@@ -1017,11 +1229,13 @@ installTorrServer() {
 
     local serverIP; serverIP=$(getIP); [ -z "$serverIP" ] && serverIP="<IP>"
     printf "\n"; t sep
+    t os_detected "$OS_NAME"
     if isRunning; then t installed_ok "$latestVersion"
     else t installed_no_start "$latestVersion"; fi
     t sep
     t webui "$serverIP" "$servicePort"
     [ -n "$isAuthUser" ] && t login_pass "$isAuthUser" "$isAuthPass"
+    logHint
     printf "\n"
 }
 
@@ -1039,6 +1253,7 @@ for arg in "$@"; do
 done
 ARGS="${ARGS# }"
 
+detectOS
 loadLang
 
 case $ARGS in
