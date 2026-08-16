@@ -968,7 +968,8 @@ changeAuth() {
             t auth_new_login; read -r newUser </dev/tty
             t auth_new_pass; read -r newPass </dev/tty
             printf '{\n  "%s": "%s"\n}\n' "$newUser" "$newPass" > "$dirInstall/accs.db"
-            chmod 600 "$dirInstall/accs.db"
+            chmod 640 "$dirInstall/accs.db"
+            chown "$username" "$dirInstall/accs.db" 2>/dev/null || true
             authOptions="--port $port --path $dirInstall --httpauth"
             t auth_updated ;;
         2)
@@ -979,7 +980,8 @@ changeAuth() {
             t auth_user; read -r newUser </dev/tty
             t auth_pass; read -r newPass </dev/tty
             printf '{\n  "%s": "%s"\n}\n' "$newUser" "$newPass" > "$dirInstall/accs.db"
-            chmod 600 "$dirInstall/accs.db"
+            chmod 640 "$dirInstall/accs.db"
+            chown "$username" "$dirInstall/accs.db" 2>/dev/null || true
             authOptions="--port $port --path $dirInstall --httpauth"
             t auth_enabled ;;
         *)
@@ -1202,7 +1204,8 @@ installTorrServer() {
         t auth_user; read -r isAuthUser </dev/tty
         t auth_pass; read -r isAuthPass </dev/tty
         printf '{\n  "%s": "%s"\n}\n' "$isAuthUser" "$isAuthPass" > "$dirInstall/accs.db"
-        chmod 600 "$dirInstall/accs.db"
+        chmod 640 "$dirInstall/accs.db"
+        chown "$username" "$dirInstall/accs.db" 2>/dev/null || true
         authOptions="--port $servicePort --path $dirInstall --httpauth"
         t auth_saved
     fi
