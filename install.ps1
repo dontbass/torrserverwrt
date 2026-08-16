@@ -64,6 +64,19 @@ function Test-Admin {
     return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Fix accs.db BOM if present (PS5.1 Set-Content UTF8 adds BOM, Go json fails)
+function Repair-AccsDb {
+    if (-not (Test-Path $AccsFile)) { return }
+    $bytes = [System.IO.File]::ReadAllBytes($AccsFile)
+    # UTF-8 BOM = EF BB BF
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        Write-Warn "accs.db has UTF-8 BOM — fixing (this caused auth failure)"
+        $noBom = $bytes[3..($bytes.Length - 1)]
+        [System.IO.File]::WriteAllBytes($AccsFile, $noBom)
+        Write-Ok "accs.db fixed — restart TorrServer to apply"
+    }
+}
+
 function Get-LatestRelease {
     try {
         $r = Invoke-RestMethod "https://api.github.com/repos/YouROK/TorrServer/releases/latest" `
@@ -228,7 +241,7 @@ function Download-TorrServer {
     }
 
     Move-Item -Path $tmpPath -Destination $BinPath -Force
-    Set-Content -Path $VersionFile -Value $Version -Encoding UTF8
+    [System.IO.File]::WriteAllText($VersionFile, $Version, [System.Text.UTF8Encoding]::new($false))
     Write-Ok "Downloaded TorrServer $Version"
     return $true
 }
@@ -285,7 +298,9 @@ function Install-TorrServer {
         $authUser = Read-Host " Username"
         $authPass = Read-Host " Password"
         $json = "{`n  `"$authUser`": `"$authPass`"`n}"
-        Set-Content -Path $AccsFile -Value $json -Encoding UTF8
+        # PS5.1 Set-Content -Encoding UTF8 adds BOM — Go json.Unmarshal fails with BOM
+        # Use WriteAllText with explicit UTF8 without BOM
+        [System.IO.File]::WriteAllText($AccsFile, $json, [System.Text.UTF8Encoding]::new($false))
         $authArgs += " --httpauth"
         Write-Ok "Credentials saved"
     }
@@ -339,6 +354,7 @@ function Show-Status {
     Write-Sep
     Write-Color " TorrServer Status" "cyan"
     Write-Sep
+    Repair-AccsDb
     if (-not (Test-Installed)) {
         Write-Color " State:    NOT INSTALLED" "red"
         Write-Sep; Write-Host ""; return
