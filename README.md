@@ -128,6 +128,8 @@ sh install.sh -h    # справка
 
 **Механизм:** nftables правило с приоритетом `mangle-5` (выше любого tproxy) выпускает трафик cgroup `services/torrserver` напрямую на уровне ядра. Работает с любым прокси без дополнительной настройки.
 
+> ⚠️ **Требования:** OpenWrt **22.03 и новее** (ядро 5.10+). На OpenWrt 19.07 и 21.02 функция `socket cgroupv2` в nftables отсутствует или работает нестабильно — скрипт предупредит об этом и предложит применить на свой риск.
+
 ```sh
 sh install.sh -b    # настроить/обновить bypass
 ```
@@ -287,6 +289,8 @@ If the router runs a VPN or proxy tool (nikki, podkop, sing-box, openclash, pass
 During installation the script detects active proxy tools and offers to configure a split-tunnel: TorrServer goes direct, everything else goes through VPN.
 
 **Mechanism:** an nftables rule at priority `mangle-5` (higher than any tproxy) releases cgroup `services/torrserver` traffic directly at kernel level. Works with any proxy without extra configuration.
+
+> ⚠️ **Requirements:** OpenWrt **22.03 or newer** (kernel 5.10+). On OpenWrt 19.07 and 21.02 the `socket cgroupv2` nftables feature is missing or unstable — the script will warn you and let you proceed at your own risk.
 
 ```sh
 sh install.sh -b    # configure / reconfigure bypass
