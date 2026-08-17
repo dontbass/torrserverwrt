@@ -655,7 +655,6 @@ showStatus() {
         t s_autoupd_off
     fi
 
-    printf " "; t s_update_avail ""
     local latest
     latest=$(getLatestRelease)
     if [ -n "$latest" ] && [ "$latest" != "$version" ]; then
@@ -836,7 +835,7 @@ EOF
         # systemd service
         cat > /etc/systemd/system/${serviceName}.service << EOF
 [Unit]
-Description=TorrServer — torrent streaming server
+Description=TorrServer torrent streaming server
 After=network.target
 Wants=network-online.target
 
@@ -848,6 +847,7 @@ Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=torrserver
 
 [Install]
 WantedBy=multi-user.target
@@ -1257,8 +1257,23 @@ installTorrServer() {
     local serverIP; serverIP=$(getIP); [ -z "$serverIP" ] && serverIP="<IP>"
     printf "\n"; t sep
     t os_detected "$OS_NAME"
-    if isRunning; then t installed_ok "$latestVersion"
-    else t installed_no_start "$latestVersion"; fi
+    if isRunning; then
+        t installed_ok "$latestVersion"
+    else
+        t installed_no_start "$latestVersion"
+        # Показываем последние строки лога для диагностики
+        if hasSystemd; then
+            printf "\n"
+            if [ "$LANG_CODE" = "en" ]; then
+                printf " Last log lines:\n"
+            else
+                printf " Последние строки лога:\n"
+            fi
+            printf " ─────────────────────────────────\n"
+            journalctl -u "$serviceName" -n 8 --no-pager 2>/dev/null | tail -8 | sed 's/^/  /'
+            printf " ─────────────────────────────────\n"
+        fi
+    fi
     t sep
     t webui "$serverIP" "$servicePort"
     [ -n "$isAuthUser" ] && t login_pass "$isAuthUser" "$isAuthPass"
