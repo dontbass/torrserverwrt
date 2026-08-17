@@ -383,7 +383,10 @@ detectArch() {
 addUser() {
     [ "$username" = "root" ] && return 0
     if grep -q "^$username:" /etc/passwd 2>/dev/null; then
-        t user_exists "$username"; return 0
+        t user_exists "$username"
+        # Даже если пользователь уже есть — убеждаемся что директория ему принадлежит
+        chown -R "$username" "$dirInstall" 2>/dev/null || true
+        return 0
     fi
     case "$OS_TYPE" in
         openwrt|alpine)
@@ -396,7 +399,9 @@ addUser() {
             ;;
     esac
     if grep -q "^$username:" /etc/passwd 2>/dev/null; then
-        chmod 755 "$dirInstall"
+        # Передаём владение директорией пользователю — он должен иметь право на запись
+        chown -R "$username" "$dirInstall"
+        chmod 750 "$dirInstall"
         t user_added "$username"
     else
         t user_root "$username"
