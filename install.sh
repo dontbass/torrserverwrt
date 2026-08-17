@@ -332,10 +332,10 @@ t() {
         ru:main_running) str=" Служба:  $(colorize green ЗАПУЩЕНА)\n" ;;
         en:main_stopped) str=" Service: $(colorize red STOPPED)\n" ;;
         ru:main_stopped) str=" Служба:  $(colorize red ОСТАНОВЛЕНА)\n" ;;
-        en:main_menu)   str="  $(colorize green  i) — install / update\n  $(colorize cyan   s) — status\n  $(colorize yellow p) — change port\n  $(colorize yellow a) — configure authorization\n  $(colorize cyan   c) — auto-update (cron)\n  $(colorize green  r) — restart service\n  $(colorize red    d) — remove\n  $(colorize cyan   l) — change language\n  $(colorize yellow n) — exit\n" ;;
-        ru:main_menu)   str="  $(colorize green  i) — установить / обновить\n  $(colorize cyan   s) — статус\n  $(colorize yellow p) — сменить порт\n  $(colorize yellow a) — настроить авторизацию\n  $(colorize cyan   c) — автообновление (cron)\n  $(colorize green  r) — перезапустить службу\n  $(colorize red    d) — удалить\n  $(colorize cyan   l) — сменить язык\n  $(colorize yellow n) — выйти\n" ;;
-        en:main_hint)   str=" Enter i, s, p, a, c, r, d, l or n\n" ;;
-        ru:main_hint)   str=" Введите i, s, p, a, c, r, d, l или n\n" ;;
+        en:main_menu)   str="  $(colorize green  i) — install / update\n  $(colorize cyan   s) — status\n  $(colorize yellow b) — proxy bypass\n  $(colorize yellow p) — change port\n  $(colorize yellow a) — configure authorization\n  $(colorize cyan   c) — auto-update (cron)\n  $(colorize green  r) — restart service\n  $(colorize red    d) — remove\n  $(colorize cyan   l) — change language\n  $(colorize yellow n) — exit\n" ;;
+        ru:main_menu)   str="  $(colorize green  i) — установить / обновить\n  $(colorize cyan   s) — статус\n  $(colorize yellow b) — прямое соединение (bypass)\n  $(colorize yellow p) — сменить порт\n  $(colorize yellow a) — настроить авторизацию\n  $(colorize cyan   c) — автообновление (cron)\n  $(colorize green  r) — перезапустить службу\n  $(colorize red    d) — удалить\n  $(colorize cyan   l) — сменить язык\n  $(colorize yellow n) — выйти\n" ;;
+        en:main_hint)   str=" Enter i, s, b, p, a, c, r, d, l or n\n" ;;
+        ru:main_hint)   str=" Введите i, s, b, p, a, c, r, d, l или n\n" ;;
         # --- справка ---
         en:help_usage)  str="Usage: %s [command] [flags]\n\nCommands:\n  %-30s %s\n  %-30s %s\n  %-30s %s\n  %-30s %s\n  %-30s %s\n\nFlags:\n  %-30s %s\n  %-30s %s\n" ;;
         ru:help_usage)  str="Использование: %s [команда] [флаги]\n\nКоманды:\n  %-30s %s\n  %-30s %s\n  %-30s %s\n  %-30s %s\n  %-30s %s\n\nФлаги:\n  %-30s %s\n  %-30s %s\n" ;;
@@ -550,6 +550,7 @@ helpUsage() {
         printf "  %-30s %s\n" "-i | --install | install"  "install latest version"
         printf "  %-30s %s\n" "-u | --update  | update"   "update to latest version"
         printf "  %-30s %s\n" "-s | --status  | status"   "service status"
+        printf "  %-30s %s\n" "-b | --bypass  | bypass"   "configure proxy bypass"
         printf "  %-30s %s\n" "-r | --remove  | remove"   "remove TorrServer"
         printf "  %-30s %s\n" "-h | --help    | help"     "this help"
         printf "\nFlags:\n"
@@ -560,6 +561,7 @@ helpUsage() {
         printf "  %-30s %s\n" "-i | --install | install"  "установка последней версии"
         printf "  %-30s %s\n" "-u | --update  | update"   "обновление до последней версии"
         printf "  %-30s %s\n" "-s | --status  | status"   "статус службы"
+        printf "  %-30s %s\n" "-b | --bypass  | bypass"   "настроить прямое соединение"
         printf "  %-30s %s\n" "-r | --remove  | remove"   "удаление TorrServer"
         printf "  %-30s %s\n" "-h | --help    | help"     "эта справка"
         printf "\nФлаги:\n"
@@ -585,6 +587,7 @@ uninstall() {
     printf " "; t remove_sure; t yes_no
     read -r ans </dev/tty
     if [ "$ans" != "${ans#[YyДд]}" ]; then
+        [ "$OS_TYPE" = "openwrt" ] && removeProxyBypass
         cleanup; t removed_ok
     else
         t cancelled
@@ -1242,6 +1245,235 @@ installTorrServer() {
     [ -n "$isAuthUser" ] && t login_pass "$isAuthUser" "$isAuthPass"
     logHint
     printf "\n"
+
+    # Предлагаем bypass только на OpenWrt (где актуальны прокси-инструменты)
+    [ "$OS_TYPE" = "openwrt" ] && applyProxyBypass
+}
+
+# ============================================================
+# PROXY BYPASS (OpenWrt only)
+# ============================================================
+
+NFTFILE="/etc/nftables.d/torrserver-bypass.nft"
+BYPASS_CGROUP="services/torrserver"
+
+# Определяем какие прокси-инструменты активны
+detectProxyTools() {
+    local found=""
+    uci get nikki.proxy.enabled 2>/dev/null | grep -q "1"          && found="$found nikki"
+    uci get podkop.main.enabled 2>/dev/null | grep -q "1"           && found="$found podkop"
+    uci get openclash.config.enable 2>/dev/null | grep -q "1"       && found="$found openclash"
+    uci get homeproxy.config.enabled 2>/dev/null | grep -q "1"      && found="$found homeproxy"
+    /etc/init.d/passwall status 2>/dev/null | grep -q "running"     && found="$found passwall"
+    /etc/init.d/passwall2 status 2>/dev/null | grep -q "running"    && found="$found passwall2"
+    [ -f "/etc/shellcrash/config.yaml" ] && found="$found shellcrash"
+    pgrep -x "clash" >/dev/null 2>&1                                && found="$found clash"
+    printf "%s" "$found"
+}
+
+applyNftablesBypass() {
+    if ! command -v nft >/dev/null 2>&1; then
+        if [ "$LANG_CODE" = "en" ]; then
+            printf " - nftables not found — bypass unavailable on this system\n"
+        else
+            printf " - nftables не найден — bypass недоступен на этой системе\n"
+        fi
+        return 1
+    fi
+
+    if [ -f "$NFTFILE" ] && grep -q "torrserver" "$NFTFILE" 2>/dev/null; then
+        if [ "$LANG_CODE" = "en" ]; then
+            printf " - nftables bypass already configured\n"
+        else
+            printf " - nftables bypass уже настроен\n"
+        fi
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$NFTFILE")"
+    cat > "$NFTFILE" << 'NFT'
+# TorrServer bypass — direct connection, bypasses any proxy/VPN
+# Works with: nikki, podkop, sing-box, openclash, passwall, shellcrash, homeproxy
+# Priority mangle-5 is higher than any tproxy/redirect tool
+table inet torrserver_bypass {
+    chain prerouting {
+        type filter hook prerouting priority mangle - 5; policy accept;
+        socket cgroupv2 level 2 "services/torrserver" return comment "torrserver direct"
+    }
+    chain output {
+        type route hook output priority mangle - 5; policy accept;
+        socket cgroupv2 level 2 "services/torrserver" return comment "torrserver direct"
+    }
+}
+NFT
+
+    if nft -f "$NFTFILE" 2>/dev/null; then
+        if [ "$LANG_CODE" = "en" ]; then
+            printf " - $(colorize green "nftables rule applied immediately")\n"
+        else
+            printf " - $(colorize green "nftables правило применено немедленно")\n"
+        fi
+    else
+        if [ "$LANG_CODE" = "en" ]; then
+            printf " - $(colorize yellow "nftables rule saved, will apply after reboot")\n"
+        else
+            printf " - $(colorize yellow "nftables правило сохранено, применится после перезагрузки")\n"
+        fi
+    fi
+}
+
+applyUciBypass() {
+    # nikki
+    if uci get nikki.proxy.enabled 2>/dev/null | grep -q "1"; then
+        if ! uci get nikki.@router_access_control[0].cgroup 2>/dev/null | grep -q "$BYPASS_CGROUP"; then
+            uci add_list nikki.@router_access_control[0].cgroup="$BYPASS_CGROUP"
+            uci commit nikki
+            /etc/init.d/nikki restart >/dev/null 2>&1
+            printf " - $(colorize green "[nikki]") UCI exception added\n"
+        else
+            printf " - $(colorize green "[nikki]") UCI exception already set\n"
+        fi
+    fi
+    # podkop
+    if uci get podkop.main.enabled 2>/dev/null | grep -q "1"; then
+        if ! uci get podkop.main.excluded_processes 2>/dev/null | grep -q "torrserver"; then
+            uci add_list podkop.main.excluded_processes="torrserver"
+            uci commit podkop
+            /etc/init.d/podkop restart >/dev/null 2>&1
+            printf " - $(colorize green "[podkop]") UCI exception added\n"
+        else
+            printf " - $(colorize green "[podkop]") UCI exception already set\n"
+        fi
+    fi
+    # openclash
+    if uci get openclash.config.enable 2>/dev/null | grep -q "1"; then
+        local ocmixin="/etc/openclash/custom/openclash_custom_firewall_rules.sh"
+        mkdir -p "$(dirname "$ocmixin")"
+        if ! grep -q "torrserver" "$ocmixin" 2>/dev/null; then
+            printf 'nft insert rule inet torrserver_bypass output socket cgroupv2 level 2 "services/torrserver" return 2>/dev/null || true\n' >> "$ocmixin"
+            printf " - $(colorize green "[openclash]") custom firewall rule added\n"
+        else
+            printf " - $(colorize green "[openclash]") already configured\n"
+        fi
+    fi
+    # homeproxy / passwall / shellcrash — nftables covers them
+    for tool in homeproxy passwall passwall2; do
+        if uci get ${tool}.config.enabled 2>/dev/null | grep -q "1" || \
+           /etc/init.d/$tool status 2>/dev/null | grep -q "running"; then
+            printf " - $(colorize green "[$tool]") detected — covered by nftables rule\n"
+        fi
+    done
+    [ -f "/etc/shellcrash/config.yaml" ] && \
+        printf " - $(colorize green "[shellcrash]") detected — covered by nftables rule\n"
+}
+
+removeProxyBypass() {
+    if [ -f "$NFTFILE" ]; then
+        nft delete table inet torrserver_bypass 2>/dev/null
+        rm -f "$NFTFILE"
+        printf " - nftables rule removed\n"
+    fi
+    if uci get nikki.@router_access_control[0].cgroup 2>/dev/null | grep -q "$BYPASS_CGROUP"; then
+        uci del_list nikki.@router_access_control[0].cgroup="$BYPASS_CGROUP" 2>/dev/null
+        uci commit nikki; /etc/init.d/nikki restart >/dev/null 2>&1
+        printf " - nikki UCI exception removed\n"
+    fi
+    if uci get podkop.main.excluded_processes 2>/dev/null | grep -q "torrserver"; then
+        uci del_list podkop.main.excluded_processes="torrserver" 2>/dev/null
+        uci commit podkop; /etc/init.d/podkop restart >/dev/null 2>&1
+        printf " - podkop UCI exception removed\n"
+    fi
+}
+
+applyProxyBypass() {
+    printf "\n"
+    printf "=============================================================\n"
+    if [ "$LANG_CODE" = "en" ]; then
+        printf " Proxy Bypass Setup\n"
+    else
+        printf " Настройка прямого соединения\n"
+    fi
+    printf "=============================================================\n"
+    printf "\n"
+
+    # Ищем активные прокси
+    local found
+    found=$(detectProxyTools)
+
+    if [ -n "$found" ]; then
+        if [ "$LANG_CODE" = "en" ]; then
+            printf " Detected proxy tools:$(colorize yellow "$found")\n"
+            printf "\n"
+            printf " $(colorize yellow "WARNING:") BitTorrent traffic through VPN violates most\n"
+            printf " VPN providers ToS and may get your account banned.\n"
+            printf "\n"
+            printf " Solution: split-tunnel via Linux kernel cgroup.\n"
+            printf " TorrServer traffic goes direct, everything else via VPN.\n"
+        else
+            printf " Обнаружены прокси-инструменты:$(colorize yellow "$found")\n"
+            printf "\n"
+            printf " $(colorize yellow "ВНИМАНИЕ:") BitTorrent через VPN нарушает правила большинства\n"
+            printf " VPN-провайдеров и может привести к блокировке аккаунта.\n"
+            printf "\n"
+            printf " Решение: split-tunnel через cgroup ядра Linux.\n"
+            printf " Трафик TorrServer пойдёт напрямую, остальное — через VPN.\n"
+        fi
+    else
+        if [ "$LANG_CODE" = "en" ]; then
+            printf " No active proxy tools detected.\n"
+            printf "\n"
+            printf " You can still configure bypass now — it will work\n"
+            printf " automatically when any proxy tool is installed later.\n"
+        else
+            printf " Активные прокси-инструменты не обнаружены.\n"
+            printf "\n"
+            printf " Можно настроить bypass заранее — он автоматически\n"
+            printf " сработает при установке любого прокси в будущем.\n"
+        fi
+    fi
+
+    printf "\n"
+    if [ "$LANG_CODE" = "en" ]; then
+        printf " Configure direct connection for TorrServer? "
+    else
+        printf " Настроить прямое соединение для TorrServer? "
+    fi
+    t yes_no
+    read -r ans </dev/tty
+    if [ "$ans" = "${ans#[YyДд]}" ]; then
+        if [ "$LANG_CODE" = "en" ]; then
+            printf "\n Skipped. Run 'sh %s -b' later to configure.\n\n" "$scriptname"
+        else
+            printf "\n Пропущено. Запустите 'sh %s -b' позже.\n\n" "$scriptname"
+        fi
+        return
+    fi
+
+    printf "\n"
+    if [ "$LANG_CODE" = "en" ]; then
+        printf " Step 1: universal nftables bypass...\n"
+    else
+        printf " Шаг 1: универсальный nftables bypass...\n"
+    fi
+    applyNftablesBypass
+
+    if [ "$LANG_CODE" = "en" ]; then
+        printf " Step 2: UCI exceptions for known tools...\n"
+    else
+        printf " Шаг 2: UCI исключения для известных инструментов...\n"
+    fi
+    applyUciBypass
+
+    printf "\n"
+    if [ "$LANG_CODE" = "en" ]; then
+        printf " $(colorize green "Done.") TorrServer traffic goes direct.\n"
+        printf " The nftables rule persists across proxy tool changes.\n"
+        printf " To reconfigure: sh %s -b\n\n" "$scriptname"
+    else
+        printf " $(colorize green "Готово.") Трафик TorrServer идёт напрямую.\n"
+        printf " Правило nftables работает с любым прокси-инструментом.\n"
+        printf " Для повторного применения: sh %s -b\n\n" "$scriptname"
+    fi
 }
 
 # ============================================================
@@ -1265,6 +1497,7 @@ case $ARGS in
     -i|--install|install) initialCheck; installTorrServer; exit ;;
     -u|--update|update)   initialCheck; UpdateVersion "$AUTO_MODE"; exit ;;
     -s|--status|status)   showStatus; exit ;;
+    -b|--bypass|bypass)   initialCheck; applyProxyBypass; exit ;;
     -r|--remove|remove)   initialCheck; uninstall; exit ;;
     -h|--help|help)       helpUsage; exit ;;
     "")                   ;;
@@ -1298,6 +1531,7 @@ while true; do
     case $ydn in
         [IiИи]*) initialCheck; installTorrServer ;;
         [SsСс]*) showStatus ;;
+        [BbБб]*) isRoot || { t requires_root "$scriptname"; continue; }; applyProxyBypass ;;
         [PpПп]*) isRoot || { t requires_root "$scriptname"; continue; }; changePort ;;
         [AaАа]*) isRoot || { t requires_root "$scriptname"; continue; }; changeAuth ;;
         [CcСс]*) isRoot || { t requires_root "$scriptname"; continue; }; setupAutoupdate ;;
