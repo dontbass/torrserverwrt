@@ -139,8 +139,7 @@ t() {
         ru:inet_fail)   str=" - Нет доступа к GitHub. Проверьте соединение.\n" ;;
         # --- установка ---
         en:install_title)  str="=============================================================\n Installation\n=============================================================\n" ;;
-        ru:install_title)  str="=============================================================\n Установка TorrServer\n=============================================================\n" ;;
-        en:hw_warn)     str=" $(colorize yellow "ROUTER REQUIREMENTS:")\n  RAM:   256 MB min, 512 MB+ recommended\n  Space: ~70-80 MB free in /opt\n  CPU:   MIPS routers may struggle with streaming.\n         ARM64 works best (NanoPi, RPi 3/4, MT7981)\n" ;;
+        ru:install_title)  str="=============================================================\n Установка TorrServer\n=============================================================\n" ;;        en:hw_warn)     str=" $(colorize yellow "ROUTER REQUIREMENTS:")\n  RAM:   256 MB min, 512 MB+ recommended\n  Space: ~70-80 MB free in /opt\n  CPU:   MIPS routers may struggle with streaming.\n         ARM64 works best (NanoPi, RPi 3/4, MT7981)\n" ;;
         ru:hw_warn)     str=" $(colorize yellow "ТРЕБОВАНИЯ К РОУТЕРУ:")\n  RAM:   минимум 256 МБ, рекомендуется 512 МБ и более\n  Место: ~70-80 МБ свободно в /opt\n  CPU:   на MIPS-роутерах стриминг может тормозить.\n         Уверенно работает на ARM64 (NanoPi, RPi 3/4, MT7981)\n" ;;
         en:proceed)     str=" Proceed with installation? " ;;
         ru:proceed)     str=" Продолжить установку? " ;;
@@ -1170,7 +1169,27 @@ installTorrServer() {
 
     # === Свежая установка ===
     printf "\n"; t install_title; printf "\n"
-    t hw_warn
+
+    # Показываем предупреждение в зависимости от платформы
+    case "$OS_TYPE" in
+        openwrt|alpine)
+            t hw_warn ;;
+        *)
+            # На VPS/сервере — другой текст
+            if [ "$LANG_CODE" = "en" ]; then
+                printf " $(colorize yellow "SERVER REQUIREMENTS:")\n"
+                printf "  RAM:   256 MB minimum, 512 MB+ recommended\n"
+                printf "  Space: ~70-80 MB free in /opt\n"
+                printf "  OS:    Linux with systemd or OpenRC\n"
+            else
+                printf " $(colorize yellow "ТРЕБОВАНИЯ К СЕРВЕРУ:")\n"
+                printf "  RAM:   минимум 256 МБ, рекомендуется 512 МБ и более\n"
+                printf "  Место: ~70-80 МБ свободно в /opt\n"
+                printf "  ОС:    Linux с systemd или OpenRC\n"
+            fi
+            ;;
+    esac
+
     printf "\n"; t proceed; t yes_no
     read -r ans </dev/tty
     [ "$ans" != "${ans#[YyДд]}" ] || { t aborted; return 0; }
