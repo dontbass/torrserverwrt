@@ -1281,6 +1281,40 @@ applyNftablesBypass() {
         return 1
     fi
 
+    # Проверяем версию OpenWrt — cgroupv2 socket match требует OpenWrt 22.03+ (ядро 5.10+)
+    local owrt_ver=""
+    if [ -f /etc/openwrt_release ]; then
+        owrt_ver=$(grep "DISTRIB_RELEASE" /etc/openwrt_release | cut -d'"' -f2 | cut -d'.' -f1-2)
+    fi
+
+    # Сравниваем: нужна версия >= 22.03
+    local major minor
+    major=$(printf "%s" "$owrt_ver" | cut -d'.' -f1)
+    minor=$(printf "%s" "$owrt_ver" | cut -d'.' -f2)
+    local supported=1
+    if [ -n "$major" ] && [ -n "$minor" ]; then
+        if [ "$major" -lt 22 ] 2>/dev/null; then
+            supported=0
+        elif [ "$major" -eq 22 ] && [ "$minor" -lt 3 ] 2>/dev/null; then
+            supported=0
+        fi
+    fi
+
+    if [ "$supported" -eq 0 ]; then
+        if [ "$LANG_CODE" = "en" ]; then
+            printf " $(colorize yellow "WARN") OpenWrt %s detected.\n" "$owrt_ver"
+            printf "      cgroupv2 bypass requires OpenWrt 22.03+ (kernel 5.10+).\n"
+            printf "      Your version may not support it — apply anyway? "
+        else
+            printf " $(colorize yellow "WARN") Обнаружен OpenWrt %s.\n" "$owrt_ver"
+            printf "      cgroupv2 bypass требует OpenWrt 22.03+ (ядро 5.10+).\n"
+            printf "      Ваша версия может не поддерживать — применить всё равно? "
+        fi
+        t yes_no
+        read -r ans </dev/tty
+        [ "$ans" != "${ans#[YyДд]}" ] || return 1
+    fi
+
     if [ -f "$NFTFILE" ] && grep -q "torrserver" "$NFTFILE" 2>/dev/null; then
         if [ "$LANG_CODE" = "en" ]; then
             printf " - nftables bypass already configured\n"
