@@ -75,6 +75,7 @@ Invoke-WebRequest -Uri https://raw.githubusercontent.com/dontbass/torrserverwrt/
 | | |
 |---|---|
 | 🌐 | Интерфейс на русском и английском — язык сохраняется между сессиями |
+| 🔀 | Proxy bypass через nftables cgroupv2 — торрент-трафик идёт напрямую, минуя VPN |
 | 🔍 | Автоопределение архитектуры роутера |
 | ⬇️ | Загрузка последней версии TorrServer с GitHub |
 | ⚙️ | Настройка службы через **procd** с автозапуском |
@@ -93,6 +94,7 @@ Invoke-WebRequest -Uri https://raw.githubusercontent.com/dontbass/torrserverwrt/
 sh install.sh -i    # установка
 sh install.sh -u    # обновление
 sh install.sh -s    # статус
+sh install.sh -b    # настроить прямое соединение (bypass прокси)
 sh install.sh -r    # удаление
 sh install.sh -h    # справка
 ```
@@ -117,6 +119,22 @@ sh install.sh -h    # справка
  Обновление: не требуется
 =============================================================
 ```
+
+### Прямое соединение (Proxy Bypass)
+
+Если на роутере установлен VPN или прокси-инструмент (nikki, podkop, sing-box, openclash, passwall, shellcrash и другие) — торрент-трафик TorrServer может пойти через него. Это нарушает правила большинства VPN-провайдеров и может привести к блокировке аккаунта.
+
+При установке скрипт автоматически обнаруживает активные прокси-инструменты и предлагает настроить split-tunnel: TorrServer работает напрямую, весь остальной трафик — через VPN.
+
+**Механизм:** nftables правило с приоритетом `mangle-5` (выше любого tproxy) выпускает трафик cgroup `services/torrserver` напрямую на уровне ядра. Работает с любым прокси без дополнительной настройки.
+
+```sh
+sh install.sh -b    # настроить/обновить bypass
+```
+
+Правило сохраняется в `/etc/nftables.d/torrserver-bypass.nft` и подхватывается fw4 автоматически после перезагрузки.
+
+> Поддерживаемые инструменты: nikki, podkop, openclash, homeproxy, passwall, passwall2, shellcrash, sing-box и любые другие через универсальное nftables правило.
 
 ### Подключение Lampa
 
@@ -217,6 +235,7 @@ After installation the web UI is available at `http://<IP>:8090`
 | | |
 |---|---|
 | 🌐 | English / Russian interface — language saved between sessions |
+| 🔀 | Proxy bypass via nftables cgroupv2 — torrent traffic goes direct, bypassing VPN |
 | 🔍 | Auto-detection of router architecture |
 | ⬇️ | Downloads the latest TorrServer version from GitHub |
 | ⚙️ | Configures as a system service via **procd** with autostart |
@@ -235,6 +254,7 @@ After installation the web UI is available at `http://<IP>:8090`
 sh install.sh -i    # install
 sh install.sh -u    # update
 sh install.sh -s    # status
+sh install.sh -b    # configure proxy bypass
 sh install.sh -r    # remove
 sh install.sh -h    # help
 ```
@@ -259,6 +279,22 @@ Flags: `--no-color` — no colors (for logs), `--auto` — for cron.
  Update:     not required
 =============================================================
 ```
+
+### Proxy Bypass
+
+If the router runs a VPN or proxy tool (nikki, podkop, sing-box, openclash, passwall, shellcrash, etc.) — TorrServer torrent traffic may go through it. BitTorrent via VPN violates most VPN providers' ToS and may get your account banned.
+
+During installation the script detects active proxy tools and offers to configure a split-tunnel: TorrServer goes direct, everything else goes through VPN.
+
+**Mechanism:** an nftables rule at priority `mangle-5` (higher than any tproxy) releases cgroup `services/torrserver` traffic directly at kernel level. Works with any proxy without extra configuration.
+
+```sh
+sh install.sh -b    # configure / reconfigure bypass
+```
+
+The rule is saved to `/etc/nftables.d/torrserver-bypass.nft` and loaded by fw4 automatically after reboot.
+
+> Supported tools: nikki, podkop, openclash, homeproxy, passwall, passwall2, shellcrash, sing-box, and any other tool via the universal nftables rule.
 
 ### Lampa integration
 
