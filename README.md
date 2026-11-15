@@ -2,7 +2,7 @@
 
 <img src="logo.svg" alt="TorrServer for OpenWrt" width="100%"/>
 
-**Установщик [TorrServer](https://github.com/YouROK/TorrServer) для OpenWrt и FriendlyWrt**
+**Установщик [TorrServer](https://github.com/YouROK/TorrServer) для Linux и Windows**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Shell](https://img.shields.io/badge/shell-POSIX%20sh-89e051.svg)](#)
@@ -21,9 +21,20 @@
 
 ### Что это
 
-TorrServer — HTTP-сервер для **стриминга торрентов без скачивания на диск**. Идеально для домашнего медиацентра: запускаете фильм в Lampa или любом другом плеере, роутер раздаёт поток прямо из торрента.
+TorrServer — HTTP-сервер для **стриминга торрентов без скачивания на диск**. Идеально для домашнего медиацентра: запускаете фильм в Lampa или любом другом плеере, устройство раздаёт поток прямо из торрента.
 
-Этот скрипт автоматизирует установку, настройку и обслуживание TorrServer на роутерах под управлением **OpenWrt** и **FriendlyWrt**.
+Этот скрипт автоматизирует установку, настройку и обслуживание TorrServer на **OpenWrt, Debian/Ubuntu, Arch Linux, Alpine Linux** и **Windows**.
+
+#### Выбор ветки: MatriX или Silo
+
+TorrServer существует в двух несовместимых ветках. При установке скрипт спрашивает, какую использовать:
+
+| Ветка | Совместимость с Lampa | Статус |
+|---|---|---|
+| **MatriX** (рекомендуется) | ✅ Работает | Стабильная, последняя: MatriX.150 |
+| **Silo** | ❌ Не работает (новый API) | Экспериментальная |
+
+После установки ветку можно сменить через меню управления (`[b] сменить ветку`) — скрипт автоматически скачает нужную версию и перенесёт настройки.
 
 ```
   Lampa / плеер  ──▶  TorrServer (роутер)  ──▶  торрент-трекер
@@ -74,17 +85,18 @@ Invoke-WebRequest -Uri https://raw.githubusercontent.com/dontbass/torrserverwrt/
 
 | | |
 |---|---|
+| 🌿 | **Выбор ветки** MatriX (Lampa) или Silo — смена в любой момент без переустановки |
 | 🌐 | Интерфейс на русском и английском — язык сохраняется между сессиями |
 | 🔀 | Proxy bypass через nftables cgroupv2 — торрент-трафик идёт напрямую, минуя VPN |
-| 🔍 | Автоопределение архитектуры роутера |
+| 🔍 | Автоопределение архитектуры устройства |
 | ⬇️ | Загрузка последней версии TorrServer с GitHub |
-| ⚙️ | Настройка службы через **procd** с автозапуском |
+| ⚙️ | Настройка службы (procd / systemd / OpenRC) с автозапуском |
 | 🔒 | HTTP-авторизация — включить, сменить пароль или отключить без переустановки |
 | 🔌 | Смена порта без переустановки |
 | 🔄 | Атомарное обновление бинаря (без `text file busy`) |
 | ↩️ | Откат на старую версию при неудачном обновлении |
 | ⏰ | Автообновление через cron (еженедельно) |
-| 📊 | Статус: версия, uptime, адрес, логин/пароль |
+| 📊 | Статус: версия, ветка, uptime, адрес, логин/пароль |
 | 💾 | Проверка свободного места перед загрузкой |
 | 🗑️ | Корректное удаление со всеми данными |
 
@@ -107,13 +119,14 @@ sh install.sh -h    # справка
 =============================================================
  Статус TorrServer
 =============================================================
- Версия:     MatriX.142.2
+ Версия:     MatriX.150
  Бинарь:     TorrServer-linux-arm64
+ Ветка:      MatriX (совместим с Lampa)
  Служба:     ЗАПУЩЕНА
  Адрес:      http://192.168.1.1:8090
  Uptime:     2ч 15м 42с
  Авториз.:   ВКЛ
- Логин:      admin
+ Логин:      owner
  Пароль:     mypassword
  Автообн.:   ВКЛ
  Обновление: не требуется
@@ -182,10 +195,15 @@ cat /var/log/torrserver-update.log   # лог обновлений
 |---|---|
 | `/opt/torrserver/TorrServer-*` | Исполняемый файл |
 | `/opt/torrserver/version` | Текущая версия |
+| `/opt/torrserver/branch` | Выбранная ветка (`matrix` или `silo`) |
 | `/opt/torrserver/lang` | Выбранный язык |
-| `/opt/torrserver/accs.db` | Логин/пароль (если авторизация включена) |
-| `/opt/torrserver/torr/` | База торрентов |
-| `/etc/init.d/torrserver` | Init-скрипт службы |
+| `/opt/torrserver/config.yaml` | Конфигурация Silo (порт, пароль, пути) |
+| `/opt/torrserver/config.yaml.bak` | Резервная копия конфига при откате Silo→MatriX |
+| `/opt/torrserver/accs.db` | Логин/пароль для MatriX (если авторизация включена) |
+| `/opt/torrserver/data/` | База данных и кэш Silo |
+| `/opt/torrserver/plugins/` | Плагины Silo |
+| `/etc/init.d/torrserver` | Init-скрипт службы (OpenWrt / Alpine) |
+| `/etc/systemd/system/torrserver.service` | Systemd-юнит (Debian / Ubuntu / Arch) |
 | `/var/log/torrserver-update.log` | Лог автообновлений |
 
 ---
@@ -194,9 +212,20 @@ cat /var/log/torrserver-update.log   # лог обновлений
 
 ### What is this
 
-TorrServer is an HTTP server for **streaming torrents without downloading to disk**. Perfect for a home media center: start a movie in Lampa or any other player, and the router streams it directly from the torrent.
+TorrServer is an HTTP server for **streaming torrents without downloading to disk**. Perfect for a home media center: start a movie in Lampa or any other player, and the device streams it directly from the torrent.
 
-This script automates installation, configuration, and maintenance of TorrServer on routers running **OpenWrt** and **FriendlyWrt**.
+This script automates installation, configuration, and maintenance of TorrServer on **OpenWrt, Debian/Ubuntu, Arch Linux, Alpine Linux** and **Windows**.
+
+#### Branch selection: MatriX or Silo
+
+TorrServer exists in two incompatible branches. The installer asks which one to use:
+
+| Branch | Lampa compatibility | Status |
+|---|---|---|
+| **MatriX** (recommended) | ✅ Works | Stable, latest: MatriX.150 |
+| **Silo** | ❌ Not supported (new API) | Experimental |
+
+You can switch branches at any time from the management menu (`[b] switch branch`) — the script will download the correct version and migrate the config automatically.
 
 ```
   Lampa / player  ──▶  TorrServer (router)  ──▶  torrent tracker
@@ -236,17 +265,18 @@ After installation the web UI is available at `http://<IP>:8090`
 
 | | |
 |---|---|
+| 🌿 | **Branch selection** MatriX (Lampa) or Silo — switch at any time without reinstall |
 | 🌐 | English / Russian interface — language saved between sessions |
 | 🔀 | Proxy bypass via nftables cgroupv2 — torrent traffic goes direct, bypassing VPN |
-| 🔍 | Auto-detection of router architecture |
+| 🔍 | Auto-detection of device architecture |
 | ⬇️ | Downloads the latest TorrServer version from GitHub |
-| ⚙️ | Configures as a system service via **procd** with autostart |
+| ⚙️ | Configures as a system service (procd / systemd / OpenRC) with autostart |
 | 🔒 | HTTP authorization — set, change or disable without reinstall |
 | 🔌 | Change port without reinstall |
 | 🔄 | Atomic binary update (no `text file busy`) |
 | ↩️ | Rollback to old version on failed update |
 | ⏰ | Auto-update via cron (weekly) |
-| 📊 | Status: version, uptime, address, login/password |
+| 📊 | Status: version, branch, uptime, address, login/password |
 | 💾 | Free space check before download |
 | 🗑️ | Clean removal with all data |
 
@@ -269,13 +299,14 @@ Flags: `--no-color` — no colors (for logs), `--auto` — for cron.
 =============================================================
  TorrServer Status
 =============================================================
- Version:    MatriX.142.2
+ Version:    MatriX.150
  Binary:     TorrServer-linux-arm64
+ Branch:     MatriX (Lampa compatible)
  Service:    RUNNING
  Address:    http://192.168.1.1:8090
  Uptime:     2h 15m 42s
  Auth:       ON
- Login:      admin
+ Login:      owner
  Password:   mypassword
  Auto-upd:   ON
  Update:     not required
@@ -344,10 +375,15 @@ cat /var/log/torrserver-update.log   # update log
 |---|---|
 | `/opt/torrserver/TorrServer-*` | Executable |
 | `/opt/torrserver/version` | Installed version |
+| `/opt/torrserver/branch` | Selected branch (`matrix` or `silo`) |
 | `/opt/torrserver/lang` | Selected language |
-| `/opt/torrserver/accs.db` | Login/password (if auth enabled) |
-| `/opt/torrserver/torr/` | Torrent database |
-| `/etc/init.d/torrserver` | Service init script |
+| `/opt/torrserver/config.yaml` | Silo configuration (port, password, paths) |
+| `/opt/torrserver/config.yaml.bak` | Config backup when rolling back Silo→MatriX |
+| `/opt/torrserver/accs.db` | Login/password for MatriX (if auth enabled) |
+| `/opt/torrserver/data/` | Silo database and cache |
+| `/opt/torrserver/plugins/` | Silo plugins |
+| `/etc/init.d/torrserver` | Service init script (OpenWrt / Alpine) |
+| `/etc/systemd/system/torrserver.service` | Systemd unit (Debian / Ubuntu / Arch) |
 | `/var/log/torrserver-update.log` | Auto-update log |
 
 ---
