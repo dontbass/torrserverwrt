@@ -7,6 +7,9 @@ scriptname=$(basename "$0")
 NO_COLOR=0
 AUTO_MODE=0
 LANG_FILE="$dirInstall/lang"
+BRANCH_FILE="$dirInstall/branch"
+# BRANCH: "silo" или "matrix" — определяется при установке
+TORRSERVER_BRANCH=""
 
 # Цвета
 RED='\033[0;31m'
@@ -157,6 +160,22 @@ t() {
         ru:latest_ver)  str=" Последняя версия: %s\n" ;;
         en:ver_fail)    str=" - Could not get version from GitHub\n" ;;
         ru:ver_fail)    str=" - Не удалось получить версию с GitHub\n" ;;
+        en:branch_prompt) str="\n Select TorrServer branch:\n  $(colorize green "1") — MatriX $(colorize green "(recommended, Lampa compatible)")\n  $(colorize yellow "2") — Silo $(colorize yellow "(new rewrite, Lampa NOT supported yet)")\n Choice: " ;;
+        ru:branch_prompt) str="\n Выберите ветку TorrServer:\n  $(colorize green "1") — MatriX $(colorize green "(рекомендуется, совместим с Lampa)")\n  $(colorize yellow "2") — Silo $(colorize yellow "(новая версия, Lampa пока НЕ поддерживается)")\n Выбор: " ;;
+        en:branch_matrix) str=" ✓ Branch: MatriX\n" ;;
+        ru:branch_matrix) str=" ✓ Ветка: MatriX\n" ;;
+        en:branch_silo)   str=" ✓ Branch: Silo (experimental)\n" ;;
+        ru:branch_silo)   str=" ✓ Ветка: Silo (экспериментальная)\n" ;;
+        en:branch_switch) str=" Switching branch: %s → %s\n" ;;
+        ru:branch_switch) str=" Смена ветки: %s → %s\n" ;;
+        en:branch_switch_warn) str="\n $(colorize yellow "WARNING:") Switching to MatriX. Lampa will work again.\n Config.yaml will be backed up.\n Continue? " ;;
+        ru:branch_switch_warn) str="\n $(colorize yellow "ВНИМАНИЕ:") Переключение на MatriX. Lampa снова заработает.\n Config.yaml будет сохранён как резерв.\n Продолжить? " ;;
+        en:branch_switch_silo_warn) str="\n $(colorize yellow "WARNING:") Switching to Silo. Lampa will NOT work.\n Continue? " ;;
+        ru:branch_switch_silo_warn) str="\n $(colorize yellow "ВНИМАНИЕ:") Переключение на Silo. Lampa работать НЕ будет.\n Продолжить? " ;;
+        en:s_branch)   str="   Branch:  %s\n" ;;
+        ru:s_branch)   str="   Ветка:   %s\n" ;;
+        en:switch_branch_opt) str="  [B] Switch branch (MatriX ↔ Silo)\n" ;;
+        ru:switch_branch_opt) str="  [B] Сменить ветку (MatriX ↔ Silo)\n" ;;
         en:port_prompt) str="\n Default port: 8090. Change? " ;;
         ru:port_prompt) str="\n Порт по умолчанию: 8090. Изменить? " ;;
         en:port_enter)  str=" Enter port (1024-65535): " ;;
@@ -320,8 +339,8 @@ t() {
         # --- меню при установленном ---
         en:already_installed) str="=============================================================\n TorrServer is already installed\n=============================================================\n" ;;
         ru:already_installed) str="=============================================================\n TorrServer уже установлен\n=============================================================\n" ;;
-        en:mgmt_menu)   str=" What to do?\n  $(colorize yellow u) — update to latest version\n  $(colorize yellow p) — change port\n  $(colorize yellow a) — configure authorization\n  $(colorize yellow c) — auto-update (cron)\n  $(colorize green  r) — restart service\n  $(colorize red    d) — remove TorrServer\n  $(colorize cyan   l) — change language\n  $(colorize cyan   n) — back\n" ;;
-        ru:mgmt_menu)   str=" Что сделать?\n  $(colorize yellow u) — обновить до последней версии\n  $(colorize yellow p) — сменить порт\n  $(colorize yellow a) — настроить авторизацию\n  $(colorize yellow c) — автообновление (cron)\n  $(colorize green  r) — перезапустить службу\n  $(colorize red    d) — удалить TorrServer\n  $(colorize cyan   l) — сменить язык\n  $(colorize cyan   n) — назад\n" ;;
+        en:mgmt_menu)   str=" What to do?\n  $(colorize yellow u) — update to latest version\n  $(colorize yellow p) — change port\n  $(colorize yellow a) — configure authorization\n  $(colorize yellow c) — auto-update (cron)\n  $(colorize green  r) — restart service\n  $(colorize blue   b) — switch branch (MatriX ↔ Silo)\n  $(colorize red    d) — remove TorrServer\n  $(colorize cyan   l) — change language\n  $(colorize cyan   n) — back\n" ;;
+        ru:mgmt_menu)   str=" Что сделать?\n  $(colorize yellow u) — обновить до последней версии\n  $(colorize yellow p) — сменить порт\n  $(colorize yellow a) — настроить авторизацию\n  $(colorize yellow c) — автообновление (cron)\n  $(colorize green  r) — перезапустить службу\n  $(colorize blue   b) — сменить ветку (MatriX ↔ Silo)\n  $(colorize red    d) — удалить TorrServer\n  $(colorize cyan   l) — сменить язык\n  $(colorize cyan   n) — назад\n" ;;
         en:mgmt_hint)   str=" Enter u, p, a, c, r, d, l or n\n" ;;
         ru:mgmt_hint)   str=" Введите u, p, a, c, r, d, l или n\n" ;;
         # --- главное меню ---
@@ -430,9 +449,33 @@ getIP() {
     fi
 }
 
+getBranch() {
+    if [ -n "$TORRSERVER_BRANCH" ]; then
+        printf "%s" "$TORRSERVER_BRANCH"; return
+    fi
+    [ -f "$BRANCH_FILE" ] && cat "$BRANCH_FILE" || printf "matrix"
+}
+
+saveBranch() {
+    local branch="$1"
+    TORRSERVER_BRANCH="$branch"
+    printf "%s" "$branch" > "$BRANCH_FILE"
+    [ "$username" != "root" ] && chown "$username" "$BRANCH_FILE" 2>/dev/null || true
+}
+
+isSilo() {
+    [ "$(getBranch)" = "silo" ]
+}
+
 getLatestRelease() {
-    curl -sf --max-time 15 "https://api.github.com/repos/YouROK/TorrServer/releases/latest" \
-        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+    if isSilo; then
+        curl -sf --max-time 15 "https://api.github.com/repos/YouROK/TorrServer/releases/latest" \
+            | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+    else
+        # MatriX — берём последний релиз с тегом MatriX.*
+        curl -sf --max-time 15 "https://api.github.com/repos/YouROK/TorrServer/releases" \
+            | grep '"tag_name":' | grep -i 'MatriX' | head -1 | sed -E 's/.*"([^"]+)".*/\1/'
+    fi
 }
 
 getInstalledVersion() {
@@ -451,27 +494,73 @@ getConfigYaml() {
     printf "%s/config.yaml" "$dirInstall"
 }
 
+getInitScriptFile() {
+    if [ "$OS_TYPE" = "openwrt" ] || [ "$OS_TYPE" = "alpine" ]; then
+        printf "/etc/init.d/%s" "$serviceName"
+    elif hasSystemd; then
+        printf "/etc/systemd/system/%s.service" "$serviceName"
+    fi
+}
+
+getServicePort_matrix() {
+    # Для MatriX — читает порт из init-скрипта (или возвращает 8090)
+    # _MATRIX_PORT_OVERRIDE — временное переопределение при смене ветки
+    if [ -n "$_MATRIX_PORT_OVERRIDE" ]; then
+        printf "%s" "$_MATRIX_PORT_OVERRIDE"; return
+    fi
+    local port="8090"
+    local f; f=$(getInitScriptFile)
+    if [ -n "$f" ] && [ -f "$f" ]; then
+        local p; p=$(grep -o '\-\-port [0-9]*' "$f" 2>/dev/null | awk '{print $2}' | head -1)
+        [ -n "$p" ] && port="$p"
+    fi
+    printf "%s" "$port"
+}
+
+getMatrixAuthFlag() {
+    # Возвращает " --httpauth" если авторизация включена в MatriX
+    if [ -f "$dirInstall/accs.db" ] && grep -q '"' "$dirInstall/accs.db" 2>/dev/null; then
+        printf " --httpauth"
+    fi
+}
+
 getServicePort() {
     local cfg; cfg=$(getConfigYaml)
     if [ -f "$cfg" ]; then
         grep -o 'port: [0-9]*' "$cfg" 2>/dev/null | awk '{print $2}' | head -1
+    else
+        # Fallback для MatriX — из init-скрипта
+        isSilo || getServicePort_matrix
     fi
 }
 
 getAuthCredentials() {
-    local cfg; cfg=$(getConfigYaml)
-    [ ! -f "$cfg" ] && return
-    local pass
-    pass=$(grep 'owner_password:' "$cfg" 2>/dev/null | sed 's/.*owner_password: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/' | tr -d '"' | tr -d "'" | head -1)
-    [ -n "$pass" ] && printf "owner:%s" "$pass"
+    if isSilo; then
+        local cfg; cfg=$(getConfigYaml)
+        [ ! -f "$cfg" ] && return
+        local pass
+        pass=$(grep 'owner_password:' "$cfg" 2>/dev/null | sed 's/.*owner_password: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/' | tr -d '"' | tr -d "'" | head -1)
+        [ -n "$pass" ] && printf "owner:%s" "$pass"
+    else
+        # MatriX — читаем из accs.db
+        if [ -f "$dirInstall/accs.db" ]; then
+            local pass; pass=$(grep -o '"[^"]*"' "$dirInstall/accs.db" 2>/dev/null | sed -n '2p' | tr -d '"')
+            [ -n "$pass" ] && printf "owner:%s" "$pass"
+        fi
+    fi
 }
 
 isAuthEnabled() {
-    local cfg; cfg=$(getConfigYaml)
-    [ ! -f "$cfg" ] && return 1
-    local pass
-    pass=$(grep 'owner_password:' "$cfg" 2>/dev/null | sed 's/.*owner_password: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/' | tr -d '"' | tr -d "'" | head -1)
-    [ -n "$pass" ]
+    if isSilo; then
+        local cfg; cfg=$(getConfigYaml)
+        [ ! -f "$cfg" ] && return 1
+        local pass
+        pass=$(grep 'owner_password:' "$cfg" 2>/dev/null | sed 's/.*owner_password: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/' | tr -d '"' | tr -d "'" | head -1)
+        [ -n "$pass" ]
+    else
+        # MatriX — проверяем наличие accs.db с паролем
+        [ -f "$dirInstall/accs.db" ] && grep -q '"' "$dirInstall/accs.db" 2>/dev/null
+    fi
 }
 
 checkInstalled() {
@@ -676,6 +765,7 @@ downloadTorrServer() {
     local version="$1" arch="$2"
     local binName="TorrServer-${arch}"
     local urlBin="https://github.com/YouROK/TorrServer/releases/download/${version}/${binName}"
+    # Для обеих веток бинарник качается из одного репо YouROK/TorrServer
     local tmpFile="$dirInstall/${binName}.tmp"
 
     # Проверяем свободное место перед скачиванием
@@ -835,7 +925,13 @@ EOF
 
 writeInitScript() {
     local binName="$1"
-    local cfgArg="-c $(getConfigYaml)"
+    # Определяем аргументы запуска в зависимости от ветки
+    local startArgs
+    if isSilo; then
+        startArgs="-c $(getConfigYaml)"
+    else
+        startArgs="--port $(getServicePort_matrix) --path $dirInstall$(getMatrixAuthFlag)"
+    fi
 
     if [ "$OS_TYPE" = "openwrt" ]; then
         # procd init script
@@ -850,7 +946,7 @@ PROG="$dirInstall/$binName"
 
 start_service() {
     procd_open_instance
-    procd_set_param command \$PROG $cfgArg
+    procd_set_param command \$PROG $startArgs
     procd_set_param respawn \${respawn_threshold:-3600} \${respawn_timeout:-5} \${respawn_retry:-5}
     procd_set_param stdout 1
     procd_set_param stderr 1
@@ -879,7 +975,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$username
-ExecStart=$dirInstall/$binName $cfgArg
+ExecStart=$dirInstall/$binName $startArgs
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -898,7 +994,7 @@ EOF
 
 description="TorrServer — torrent streaming server"
 command="$dirInstall/$binName"
-command_args="$cfgArg"
+command_args="$startArgs"
 command_user="$username"
 pidfile="/run/\${RC_SVCNAME}.pid"
 command_background=true
@@ -942,8 +1038,12 @@ svcStart() {
         rc-service "$serviceName" start
     else
         local arch; arch=$(getInstalledArch)
-        local port; port=$(getServicePort); [ -z "$port" ] && port="8090"
-        "$dirInstall/TorrServer-${arch}" --port "$port" --path "$dirInstall" &
+        if isSilo; then
+            "$dirInstall/TorrServer-${arch}" -c "$(getConfigYaml)" &
+        else
+            local port; port=$(getServicePort); [ -z "$port" ] && port="8090"
+            "$dirInstall/TorrServer-${arch}" --port "$port" --path "$dirInstall"$(getMatrixAuthFlag) &
+        fi
     fi
 }
 
@@ -1007,14 +1107,28 @@ changeAuth() {
     case $auth_choice in
         1)
             t auth_new_pass; read -r newPass </dev/tty
-            writeConfigYaml "$port" "$newPass"
+            if isSilo; then
+                writeConfigYaml "$port" "$newPass"
+            else
+                printf '{\n  "owner": "%s"\n}\n' "$newPass" > "$dirInstall/accs.db"
+                [ "$username" != "root" ] && chown "$username" "$dirInstall/accs.db" 2>/dev/null || true
+            fi
             t auth_updated ;;
         2)
-            writeConfigYaml "$port" ""
+            if isSilo; then
+                writeConfigYaml "$port" ""
+            else
+                rm -f "$dirInstall/accs.db"
+            fi
             t auth_disabled ;;
         3)
             t auth_pass; read -r newPass </dev/tty
-            writeConfigYaml "$port" "$newPass"
+            if isSilo; then
+                writeConfigYaml "$port" "$newPass"
+            else
+                printf '{\n  "owner": "%s"\n}\n' "$newPass" > "$dirInstall/accs.db"
+                [ "$username" != "root" ] && chown "$username" "$dirInstall/accs.db" 2>/dev/null || true
+            fi
             t auth_enabled ;;
         *)
             t cancelled; return 0 ;;
@@ -1038,13 +1152,31 @@ changePort() {
         || [ "$newPort" -lt 1024 ] || [ "$newPort" -gt 65535 ]; then
         t port_invalid; return 1
     fi
-    local ownerPass=""
-    if isAuthEnabled; then
-        ownerPass=$(getAuthCredentials); ownerPass="${ownerPass##owner:}"
+    if isSilo; then
+        local ownerPass=""
+        if isAuthEnabled; then
+            ownerPass=$(getAuthCredentials); ownerPass="${ownerPass##owner:}"
+        fi
+        writeConfigYaml "$newPort" "$ownerPass"
     fi
-    writeConfigYaml "$newPort" "$ownerPass"
+    # Для MatriX порт хранится только в init-скрипте — writeInitScript пересоздаёт его
+    # временно сохраняем нужный порт через переменную чтобы getServicePort_matrix не взял старый
     local arch binName
     arch=$(getInstalledArch); binName="TorrServer-${arch}"
+    # Для MatriX нам нужно пересоздать init-скрипт с новым портом
+    # Переопределяем getServicePort_matrix через временный файл
+    if ! isSilo; then
+        local f; f=$(getInitScriptFile)
+        if [ -n "$f" ] && [ -f "$f" ]; then
+            # Обновляем порт в init-скрипте напрямую перед writeInitScript
+            if [ "$OS_TYPE" = "openwrt" ] || [ "$OS_TYPE" = "alpine" ]; then
+                sed -i "s/--port [0-9]*/--port $newPort/" "$f" 2>/dev/null || true
+            elif hasSystemd; then
+                sed -i "s/--port [0-9]*/--port $newPort/" "$f" 2>/dev/null || true
+                systemctl daemon-reload
+            fi
+        fi
+    fi
     writeInitScript "$binName"
     t restarting
     svcStop; sleep 1
@@ -1098,13 +1230,93 @@ restartService() {
     if isRunning; then t svc_running; else t start_fail; fi
 }
 
+getMatrixAuthOptions() {
+    # Возвращает полную строку аргументов для MatriX (--port X --path DIR [--httpauth])
+    printf "--port %s --path %s%s" "$(getServicePort_matrix)" "$dirInstall" "$(getMatrixAuthFlag)"
+}
+
+selectBranch() {
+    # Задаём ветку при свежей установке, если ещё не задана
+    [ -n "$TORRSERVER_BRANCH" ] && return
+    t branch_prompt
+    read -r branch_choice </dev/tty
+    case "$branch_choice" in
+        2) saveBranch "silo"
+           t branch_silo ;;
+        *) saveBranch "matrix"
+           t branch_matrix ;;
+    esac
+}
+
+switchBranch() {
+    if ! checkInstalled; then t not_installed_err; return 1; fi
+    local current; current=$(getBranch)
+    local arch binName
+    arch=$(getInstalledArch); binName="TorrServer-${arch}"
+
+    if [ "$current" = "matrix" ]; then
+        # Переключаем на Silo
+        t branch_switch_silo_warn; t yes_no
+        read -r ans </dev/tty
+        [ "$ans" != "${ans#[YyДд]}" ] || { t cancelled; return 0; }
+        t branch_switch "MatriX" "Silo"
+        saveBranch "silo"
+        # Скачиваем Silo-версию
+        local latestVersion; latestVersion=$(getLatestRelease)
+        if [ -z "$latestVersion" ]; then t ver_fail; saveBranch "matrix"; return 1; fi
+        t stopping; svcStop; sleep 1; killall "$binName" 2>/dev/null; sleep 1
+        # Мигрируем конфиг
+        migrateToYamlConfig
+        downloadTorrServer "$latestVersion" "$arch" || { saveBranch "matrix"; svcStart 2>/dev/null; return 1; }
+        writeInitScript "$binName"
+        [ "$username" != "root" ] && chown -R "$username" "$dirInstall" 2>/dev/null || true
+        svcStart; sleep 2
+        if isRunning; then t branch_silo; t updated_ok "$latestVersion"
+        else t start_fail; saveBranch "matrix"; fi
+    else
+        # Переключаем на MatriX (откат)
+        t branch_switch_warn; t yes_no
+        read -r ans </dev/tty
+        [ "$ans" != "${ans#[YyДд]}" ] || { t cancelled; return 0; }
+        t branch_switch "Silo" "MatriX"
+        saveBranch "matrix"
+        # Бэкапим config.yaml если есть
+        local cfg; cfg=$(getConfigYaml)
+        [ -f "$cfg" ] && cp "$cfg" "${cfg}.bak" 2>/dev/null
+        # Скачиваем MatriX-версию
+        local latestVersion; latestVersion=$(getLatestRelease)
+        if [ -z "$latestVersion" ]; then t ver_fail; saveBranch "silo"; return 1; fi
+        t stopping; svcStop; sleep 1; killall "$binName" 2>/dev/null; sleep 1
+        downloadTorrServer "$latestVersion" "$arch" || { saveBranch "silo"; svcStart 2>/dev/null; return 1; }
+        # Перегенерируем init-скрипт с MatriX-флагами
+        # Порт берём из старого config.yaml если есть
+        if [ -f "$cfg" ]; then
+            local port; port=$(grep -o 'port: [0-9]*' "$cfg" 2>/dev/null | awk '{print $2}' | head -1)
+            [ -n "$port" ] || port="8090"
+            # Временно сохраняем порт в init-файл через env-переменную
+            # (writeInitScript читает getServicePort_matrix из init-скрипта, которого ещё нет)
+            # Создаём временный init-файл с правильным портом для чтения
+            local tmpInit="/tmp/ts_port_tmp.txt"
+            printf "%s" "$port" > "$tmpInit"
+            # Переопределяем getServicePort_matrix для этого вызова
+            _MATRIX_PORT_OVERRIDE="$port"
+        fi
+        writeInitScript "$binName"
+        [ "$username" != "root" ] && chown -R "$username" "$dirInstall" 2>/dev/null || true
+        svcStart; sleep 2
+        unset _MATRIX_PORT_OVERRIDE
+        if isRunning; then t branch_matrix; t updated_ok "$latestVersion"
+        else t start_fail; saveBranch "silo"; fi
+    fi
+}
+
 migrateToYamlConfig() {
-    # Мигрируем старую конфигурацию (--port/--path/--httpauth флаги) в config.yaml
+    # Только для Silo — мигрируем старые флаги в config.yaml
+    isSilo || return 0
     local cfg; cfg=$(getConfigYaml)
     [ -f "$cfg" ] && return 0  # уже есть yaml — ничего не делаем
 
     local port="8090" ownerPass=""
-    # Пытаемся извлечь порт из старого init-скрипта
     local f=""
     if [ "$OS_TYPE" = "openwrt" ] || [ "$OS_TYPE" = "alpine" ]; then
         f="/etc/init.d/$serviceName"
@@ -1115,7 +1327,6 @@ migrateToYamlConfig() {
         local oldPort; oldPort=$(grep -o '\-\-port [0-9]*' "$f" 2>/dev/null | awk '{print $2}' | head -1)
         [ -n "$oldPort" ] && port="$oldPort"
     fi
-    # Пытаемся извлечь пароль из старого accs.db
     if [ -f "$dirInstall/accs.db" ]; then
         ownerPass=$(grep -o '"[^"]*"' "$dirInstall/accs.db" 2>/dev/null | sed -n '2p' | tr -d '"')
     fi
@@ -1174,6 +1385,16 @@ installTorrServer() {
         printf "\n"; t already_installed
         t s_version "$curVersion"
         t arch_detected "$arch"
+        # Показываем ветку
+        local branchLabel
+        if isSilo; then
+            if [ "$LANG_CODE" = "en" ]; then branchLabel="$(colorize yellow "Silo (experimental)")"
+            else branchLabel="$(colorize yellow "Silo (экспериментальная)")"; fi
+        else
+            if [ "$LANG_CODE" = "en" ]; then branchLabel="$(colorize green "MatriX (Lampa compatible)")"
+            else branchLabel="$(colorize green "MatriX (совместим с Lampa)")"; fi
+        fi
+        t s_branch "$branchLabel"
         if isRunning; then
             t s_running; t s_address "$ip" "$port"
         else
@@ -1219,6 +1440,7 @@ installTorrServer() {
                 [AaАа]*) changeAuth; break ;;
                 [CcСс]*) setupAutoupdate; break ;;
                 [RrРр]*) restartService; break ;;
+                [BbБб]*) initialCheck; switchBranch; break ;;
                 [DdУу]*) initialCheck; uninstall; break ;;
                 [LlЯя]*) selectLanguage; break ;;
                 [NnНн]*) break ;;
@@ -1257,6 +1479,9 @@ installTorrServer() {
     printf "\n"
     t arch_detected "$arch"
 
+    # Выбор ветки (MatriX или Silo)
+    selectBranch
+
     checkDiskSpace
     [ ! -d "$dirInstall" ] && mkdir -p "$dirInstall"
 
@@ -1289,9 +1514,21 @@ installTorrServer() {
         t auth_saved
     fi
 
-    writeConfigYaml "$servicePort" "$isAuthPass"
+    # Пишем конфиг в зависимости от ветки
+    if isSilo; then
+        writeConfigYaml "$servicePort" "$isAuthPass"
+    else
+        # MatriX — порт и авторизация передаются через флаги в init-скрипте
+        # Временно задаём порт для writeInitScript через _MATRIX_PORT_OVERRIDE
+        _MATRIX_PORT_OVERRIDE="$servicePort"
+        if [ -n "$isAuthPass" ]; then
+            printf '{\n  "owner": "%s"\n}\n' "$isAuthPass" > "$dirInstall/accs.db"
+            [ "$username" != "root" ] && chown "$username" "$dirInstall/accs.db" 2>/dev/null || true
+        fi
+    fi
     local binName="TorrServer-${arch}"
     writeInitScript "$binName"
+    unset _MATRIX_PORT_OVERRIDE
     svcEnable
     svcStart
     sleep 2
