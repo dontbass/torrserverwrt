@@ -453,7 +453,19 @@ getBranch() {
     if [ -n "$TORRSERVER_BRANCH" ]; then
         printf "%s" "$TORRSERVER_BRANCH"; return
     fi
-    [ -f "$BRANCH_FILE" ] && cat "$BRANCH_FILE" || printf "matrix"
+    if [ -f "$BRANCH_FILE" ]; then
+        cat "$BRANCH_FILE"; return
+    fi
+    # Файла branch нет — определяем по версии установленного бинаря
+    local ver=""
+    [ -f "$dirInstall/version" ] && ver=$(cat "$dirInstall/version")
+    if printf "%s" "$ver" | grep -qi "Silo"; then
+        # Автоматически сохраняем чтобы больше не определять
+        saveBranch "silo"
+        printf "silo"
+    else
+        printf "matrix"
+    fi
 }
 
 saveBranch() {
