@@ -1094,6 +1094,8 @@ UpdateVersion() {
         svcStart 2>/dev/null
         return 1
     }
+    # Восстанавливаем права — config.db мог остаться с root-правами
+    [ "$username" != "root" ] && chown -R "$username" "$dirInstall" 2>/dev/null || true
     svcStart; sleep 2
     if isRunning; then t updated_ok "$latestVersion"
     else t updated_no_start "$latestVersion"; fi

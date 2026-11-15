@@ -177,6 +177,8 @@ function Stop-Torr {
     $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     if ($svc) { Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue }
     Get-Process -Name ($BinName -replace "\.exe$","") -ErrorAction SilentlyContinue | Stop-Process -Force
+    # Даём время процессу освободить файловые дескрипторы (config.db, accs.db)
+    Start-Sleep -Milliseconds 500
 }
 
 function Remove-Torr {
@@ -338,7 +340,17 @@ function Update-TorrServer {
     if ($cur -eq $latest) { Write-Ok "Already up to date"; return }
     Write-Info "Stopping service..."
     Stop-Torr
-    Start-Sleep -Seconds 2
+    # Ждём полного завершения процесса, чтобы .exe был доступен для замены
+    $procName = $BinName -replace "\.exe$",""
+    $waited = 0
+    while ((Get-Process -Name $procName -ErrorAction SilentlyContinue) -and $waited -lt 10) {
+        Start-Sleep -Seconds 1; $waited++
+    }
+    if (Get-Process -Name $procName -ErrorAction SilentlyContinue) {
+        Write-Warn "Process did not exit, forcing kill..."
+        Get-Process -Name $procName -ErrorAction SilentlyContinue | Stop-Process -Force
+        Start-Sleep -Seconds 1
+    }
     if (-not (Download-TorrServer $latest)) {
         Write-Warn "Download failed, restarting old version..."
         Start-Torr; return
