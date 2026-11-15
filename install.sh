@@ -249,10 +249,10 @@ t() {
         en:sep)         str="=============================================================\n" ;;
         ru:sep)         str="=============================================================\n" ;;
         # --- авторизация ---
-        en:auth_cur_login) str=" Current login: %s\n" ;;
-        ru:auth_cur_login) str=" Текущий логин: %s\n" ;;
-        en:auth_menu)   str="\n Options:\n  1 — change login/password\n  2 — disable authorization\n  3 — enable authorization\n  0 — cancel\n" ;;
-        ru:auth_menu)   str="\n Варианты:\n  1 — сменить логин/пароль\n  2 — отключить авторизацию\n  3 — включить авторизацию\n  0 — отмена\n" ;;
+        en:auth_cur_login) str=" Auth enabled, current password: %s\n" ;;
+        ru:auth_cur_login) str=" Авторизация включена, текущий пароль: %s\n" ;;
+        en:auth_menu)   str="\n Options:\n  1 — change password\n  2 — disable authorization\n  3 — enable authorization\n  0 — cancel\n" ;;
+        ru:auth_menu)   str="\n Варианты:\n  1 — сменить пароль\n  2 — отключить авторизацию\n  3 — включить авторизацию\n  0 — отмена\n" ;;
         en:auth_new_login) str=" New login: " ;;
         ru:auth_new_login) str=" Новый логин: " ;;
         en:auth_new_pass) str=" New password: " ;;
@@ -400,6 +400,7 @@ addUser() {
     esac
     if grep -q "^$username:" /etc/passwd 2>/dev/null; then
         # Передаём владение директорией пользователю — он должен иметь право на запись
+        mkdir -p "$dirInstall/data" "$dirInstall/plugins" 2>/dev/null || true
         chown -R "$username" "$dirInstall"
         chmod 750 "$dirInstall"
         t user_added "$username"
@@ -446,33 +447,31 @@ getInstalledArch() {
     fi
 }
 
+getConfigYaml() {
+    printf "%s/config.yaml" "$dirInstall"
+}
+
 getServicePort() {
-    local f=""
-    if [ "$OS_TYPE" = "openwrt" ] || [ "$OS_TYPE" = "alpine" ]; then
-        f="/etc/init.d/$serviceName"
-    elif hasSystemd; then
-        f="/etc/systemd/system/${serviceName}.service"
+    local cfg; cfg=$(getConfigYaml)
+    if [ -f "$cfg" ]; then
+        grep -o 'port: [0-9]*' "$cfg" 2>/dev/null | awk '{print $2}' | head -1
     fi
-    [ -f "$f" ] && grep -o '\-\-port [0-9]*' "$f" 2>/dev/null | awk '{print $2}' | head -1
 }
 
 getAuthCredentials() {
-    local accsFile="$dirInstall/accs.db"
-    [ ! -f "$accsFile" ] && return
-    local user pass
-    user=$(grep -o '"[^"]*"' "$accsFile" | sed -n '1p' | tr -d '"')
-    pass=$(grep -o '"[^"]*"' "$accsFile" | sed -n '2p' | tr -d '"')
-    [ -n "$user" ] && [ -n "$pass" ] && printf "%s:%s" "$user" "$pass"
+    local cfg; cfg=$(getConfigYaml)
+    [ ! -f "$cfg" ] && return
+    local pass
+    pass=$(grep 'owner_password:' "$cfg" 2>/dev/null | sed 's/.*owner_password: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/' | tr -d '"' | tr -d "'" | head -1)
+    [ -n "$pass" ] && printf "owner:%s" "$pass"
 }
 
 isAuthEnabled() {
-    local f=""
-    if [ "$OS_TYPE" = "openwrt" ] || [ "$OS_TYPE" = "alpine" ]; then
-        f="/etc/init.d/$serviceName"
-    elif hasSystemd; then
-        f="/etc/systemd/system/${serviceName}.service"
-    fi
-    [ -f "$f" ] && grep -q '\-\-httpauth' "$f" 2>/dev/null
+    local cfg; cfg=$(getConfigYaml)
+    [ ! -f "$cfg" ] && return 1
+    local pass
+    pass=$(grep 'owner_password:' "$cfg" 2>/dev/null | sed 's/.*owner_password: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/' | tr -d '"' | tr -d "'" | head -1)
+    [ -n "$pass" ]
 }
 
 checkInstalled() {
@@ -802,8 +801,41 @@ _recoverBinary() {
     fi
 }
 
+writeConfigYaml() {
+    local port="${1:-8090}" ownerPass="${2:-}"
+    local cfg; cfg=$(getConfigYaml)
+    mkdir -p "$dirInstall/data" 2>/dev/null || true
+    cat > "$cfg" << EOF
+server:
+    host: 0.0.0.0
+    port: ${port}
+storage:
+    data_dir: data
+    db_name: torrserver.db
+plugins:
+    dir: plugins
+torrent:
+    cache_size_mb: 200
+    peers_limit: 200
+    download_rate_kb: 0
+    upload_rate_kb: 0
+logging:
+    level: info
+    file: ""
+auth:
+    owner_password: "${ownerPass}"
+ffmpeg:
+    enabled: false
+    path: ""
+    probe_path: ""
+EOF
+    chmod 640 "$cfg"
+    [ "$username" != "root" ] && chown "$username" "$cfg" 2>/dev/null || true
+}
+
 writeInitScript() {
-    local binName="$1" authOptions="$2"
+    local binName="$1"
+    local cfgArg="-c $(getConfigYaml)"
 
     if [ "$OS_TYPE" = "openwrt" ]; then
         # procd init script
@@ -818,7 +850,7 @@ PROG="$dirInstall/$binName"
 
 start_service() {
     procd_open_instance
-    procd_set_param command \$PROG $authOptions
+    procd_set_param command \$PROG $cfgArg
     procd_set_param respawn \${respawn_threshold:-3600} \${respawn_timeout:-5} \${respawn_retry:-5}
     procd_set_param stdout 1
     procd_set_param stderr 1
@@ -847,7 +879,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$username
-ExecStart=$dirInstall/$binName $authOptions
+ExecStart=$dirInstall/$binName $cfgArg
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -866,7 +898,7 @@ EOF
 
 description="TorrServer — torrent streaming server"
 command="$dirInstall/$binName"
-command_args="$authOptions"
+command_args="$cfgArg"
 command_user="$username"
 pidfile="/run/\${RC_SVCNAME}.pid"
 command_background=true
@@ -965,33 +997,24 @@ changeAuth() {
     if ! checkInstalled; then t not_installed_err; return 1; fi
     local port; port=$(getServicePort); [ -z "$port" ] && port="8090"
     local creds; creds=$(getAuthCredentials)
-    if [ -n "$creds" ]; then t auth_cur_login "${creds%%:*}"; fi
+    if [ -n "$creds" ]; then t auth_cur_login "${creds##owner:}"; fi
     t auth_menu
     printf " "; t port_enter 2>/dev/null; printf "$(t port_cur 2>/dev/null)" 2>/dev/null
     if [ "$LANG_CODE" = "en" ]; then printf " Choice: "; else printf " Выбор: "; fi
     read -r auth_choice </dev/tty
 
-    local newUser newPass authOptions
+    local newPass
     case $auth_choice in
         1)
-            t auth_new_login; read -r newUser </dev/tty
             t auth_new_pass; read -r newPass </dev/tty
-            printf '{\n  "%s": "%s"\n}\n' "$newUser" "$newPass" > "$dirInstall/accs.db"
-            chmod 640 "$dirInstall/accs.db"
-            chown "$username" "$dirInstall/accs.db" 2>/dev/null || true
-            authOptions="--port $port --path $dirInstall --httpauth"
+            writeConfigYaml "$port" "$newPass"
             t auth_updated ;;
         2)
-            rm -f "$dirInstall/accs.db"
-            authOptions="--port $port --path $dirInstall"
+            writeConfigYaml "$port" ""
             t auth_disabled ;;
         3)
-            t auth_user; read -r newUser </dev/tty
             t auth_pass; read -r newPass </dev/tty
-            printf '{\n  "%s": "%s"\n}\n' "$newUser" "$newPass" > "$dirInstall/accs.db"
-            chmod 640 "$dirInstall/accs.db"
-            chown "$username" "$dirInstall/accs.db" 2>/dev/null || true
-            authOptions="--port $port --path $dirInstall --httpauth"
+            writeConfigYaml "$port" "$newPass"
             t auth_enabled ;;
         *)
             t cancelled; return 0 ;;
@@ -999,7 +1022,7 @@ changeAuth() {
 
     local arch binName
     arch=$(getInstalledArch); binName="TorrServer-${arch}"
-    writeInitScript "$binName" "$authOptions"
+    writeInitScript "$binName"
     t restarting
     svcStop; sleep 1
     svcStart; sleep 1
@@ -1015,16 +1038,14 @@ changePort() {
         || [ "$newPort" -lt 1024 ] || [ "$newPort" -gt 65535 ]; then
         t port_invalid; return 1
     fi
-    local creds authOptions
-    creds=$(getAuthCredentials)
+    local ownerPass=""
     if isAuthEnabled; then
-        authOptions="--port $newPort --path $dirInstall --httpauth"
-    else
-        authOptions="--port $newPort --path $dirInstall"
+        ownerPass=$(getAuthCredentials); ownerPass="${ownerPass##owner:}"
     fi
+    writeConfigYaml "$newPort" "$ownerPass"
     local arch binName
     arch=$(getInstalledArch); binName="TorrServer-${arch}"
-    writeInitScript "$binName" "$authOptions"
+    writeInitScript "$binName"
     t restarting
     svcStop; sleep 1
     svcStart; sleep 1
@@ -1077,6 +1098,35 @@ restartService() {
     if isRunning; then t svc_running; else t start_fail; fi
 }
 
+migrateToYamlConfig() {
+    # Мигрируем старую конфигурацию (--port/--path/--httpauth флаги) в config.yaml
+    local cfg; cfg=$(getConfigYaml)
+    [ -f "$cfg" ] && return 0  # уже есть yaml — ничего не делаем
+
+    local port="8090" ownerPass=""
+    # Пытаемся извлечь порт из старого init-скрипта
+    local f=""
+    if [ "$OS_TYPE" = "openwrt" ] || [ "$OS_TYPE" = "alpine" ]; then
+        f="/etc/init.d/$serviceName"
+    elif hasSystemd; then
+        f="/etc/systemd/system/${serviceName}.service"
+    fi
+    if [ -f "$f" ]; then
+        local oldPort; oldPort=$(grep -o '\-\-port [0-9]*' "$f" 2>/dev/null | awk '{print $2}' | head -1)
+        [ -n "$oldPort" ] && port="$oldPort"
+    fi
+    # Пытаемся извлечь пароль из старого accs.db
+    if [ -f "$dirInstall/accs.db" ]; then
+        ownerPass=$(grep -o '"[^"]*"' "$dirInstall/accs.db" 2>/dev/null | sed -n '2p' | tr -d '"')
+    fi
+    writeConfigYaml "$port" "$ownerPass"
+    if [ "$LANG_CODE" = "en" ]; then
+        printf " ✓ Migrated config to config.yaml (port: %s)\n" "$port"
+    else
+        printf " ✓ Конфигурация мигрирована в config.yaml (порт: %s)\n" "$port"
+    fi
+}
+
 UpdateVersion() {
     if ! checkInstalled; then t not_installed_err; return 1; fi
     t update_checking
@@ -1086,6 +1136,8 @@ UpdateVersion() {
     t update_cur_latest "$currentVersion" "$latestVersion"
     if [ "$currentVersion" = "$latestVersion" ]; then t update_ok; return 0; fi
     local arch; arch=$(getInstalledArch)
+    # Мигрируем на config.yaml если ещё не мигрировали
+    migrateToYamlConfig
     t stopping
     svcStop; sleep 1
     killall "TorrServer-${arch}" 2>/dev/null; sleep 1
@@ -1094,8 +1146,10 @@ UpdateVersion() {
         svcStart 2>/dev/null
         return 1
     }
-    # Восстанавливаем права — config.db мог остаться с root-правами
+    # Восстанавливаем права — файлы могли остаться с root-правами после скачивания
     [ "$username" != "root" ] && chown -R "$username" "$dirInstall" 2>/dev/null || true
+    # Обновляем init-скрипт на новый формат запуска (-c config.yaml)
+    writeInitScript "TorrServer-${arch}"
     svcStart; sleep 2
     if isRunning; then t updated_ok "$latestVersion"
     else t updated_no_start "$latestVersion"; fi
@@ -1227,22 +1281,17 @@ installTorrServer() {
         fi
     fi
 
-    local authOptions="--port $servicePort --path $dirInstall"
-    local isAuthUser="" isAuthPass=""
+    local isAuthPass=""
     t auth_prompt; t yes_no
     read -r ans </dev/tty
     if [ "$ans" != "${ans#[YyДд]}" ]; then
-        t auth_user; read -r isAuthUser </dev/tty
         t auth_pass; read -r isAuthPass </dev/tty
-        printf '{\n  "%s": "%s"\n}\n' "$isAuthUser" "$isAuthPass" > "$dirInstall/accs.db"
-        chmod 640 "$dirInstall/accs.db"
-        chown "$username" "$dirInstall/accs.db" 2>/dev/null || true
-        authOptions="--port $servicePort --path $dirInstall --httpauth"
         t auth_saved
     fi
 
+    writeConfigYaml "$servicePort" "$isAuthPass"
     local binName="TorrServer-${arch}"
-    writeInitScript "$binName" "$authOptions"
+    writeInitScript "$binName"
     svcEnable
     svcStart
     sleep 2
@@ -1283,7 +1332,7 @@ installTorrServer() {
     fi
     t sep
     t webui "$serverIP" "$servicePort"
-    [ -n "$isAuthUser" ] && t login_pass "$isAuthUser" "$isAuthPass"
+    [ -n "$isAuthPass" ] && t login_pass "owner" "$isAuthPass"
     logHint
     printf "\n"
 
