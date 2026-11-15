@@ -449,25 +449,6 @@ getIP() {
     fi
 }
 
-getBranch() {
-    if [ -n "$TORRSERVER_BRANCH" ]; then
-        printf "%s" "$TORRSERVER_BRANCH"; return
-    fi
-    if [ -f "$BRANCH_FILE" ]; then
-        cat "$BRANCH_FILE"; return
-    fi
-    # Файла branch нет — определяем по версии установленного бинаря
-    local ver=""
-    [ -f "$dirInstall/version" ] && ver=$(cat "$dirInstall/version")
-    if printf "%s" "$ver" | grep -qi "Silo"; then
-        # Автоматически сохраняем чтобы больше не определять
-        saveBranch "silo"
-        printf "silo"
-    else
-        printf "matrix"
-    fi
-}
-
 saveBranch() {
     local branch="$1"
     TORRSERVER_BRANCH="$branch"
@@ -475,8 +456,30 @@ saveBranch() {
     [ "$username" != "root" ] && chown "$username" "$BRANCH_FILE" 2>/dev/null || true
 }
 
+initBranch() {
+    # Вызывается один раз в основном процессе — устанавливает TORRSERVER_BRANCH
+    [ -n "$TORRSERVER_BRANCH" ] && return
+    if [ -f "$BRANCH_FILE" ]; then
+        TORRSERVER_BRANCH=$(cat "$BRANCH_FILE")
+        return
+    fi
+    # Файла branch нет — определяем по версии установленного бинаря
+    local ver=""
+    [ -f "$dirInstall/version" ] && ver=$(cat "$dirInstall/version")
+    if printf "%s" "$ver" | grep -qi "Silo"; then
+        saveBranch "silo"
+    else
+        TORRSERVER_BRANCH="matrix"
+    fi
+}
+
+getBranch() {
+    # Всегда возвращает значение из переменной (установленной initBranch)
+    printf "%s" "${TORRSERVER_BRANCH:-matrix}"
+}
+
 isSilo() {
-    [ "$(getBranch)" = "silo" ]
+    [ "$TORRSERVER_BRANCH" = "silo" ]
 }
 
 getLatestRelease() {
@@ -1865,6 +1868,7 @@ ARGS="${ARGS# }"
 
 detectOS
 loadLang
+initBranch
 
 case $ARGS in
     -i|--install|install) initialCheck; installTorrServer; exit ;;
