@@ -17,7 +17,7 @@ $AccsFile    = Join-Path $InstallDir "accs.db"
 $LogFile     = Join-Path $InstallDir "torrserver.log"
 $ScriptUrl   = "https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.ps1"
 
-# "matrix" (Lampa compatible) or "silo" (new rewrite) — set by Initialize-Branch
+# "matrix" (Lampa compatible) or "silo" (new rewrite) - set by Initialize-Branch
 $script:Branch = "matrix"
 
 # Action from command line argument
@@ -70,7 +70,7 @@ function Test-Admin {
     return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-# PS5.1 Set-Content -Encoding UTF8 adds BOM — Go parsers fail on it. Always write without BOM.
+# PS5.1 Set-Content -Encoding UTF8 adds BOM - Go parsers fail on it. Always write without BOM.
 function Write-NoBom {
     param([string]$Path, [string]$Text)
     [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
@@ -81,10 +81,10 @@ function Repair-AccsDb {
     if (-not (Test-Path $AccsFile)) { return }
     $bytes = [System.IO.File]::ReadAllBytes($AccsFile)
     if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
-        Write-Warn "accs.db has UTF-8 BOM — fixing (this caused auth failure)"
+        Write-Warn "accs.db has UTF-8 BOM - fixing (this caused auth failure)"
         $noBom = $bytes[3..($bytes.Length - 1)]
         [System.IO.File]::WriteAllBytes($AccsFile, $noBom)
-        Write-Ok "accs.db fixed — restart TorrServer to apply"
+        Write-Ok "accs.db fixed - restart TorrServer to apply"
     }
 }
 
@@ -103,7 +103,7 @@ function Initialize-Branch {
         $b = (Get-Content $BranchFile -Raw).Trim().ToLower()
         if ($b -eq "silo" -or $b -eq "matrix") { $script:Branch = $b; return }
     }
-    # No branch file (installed by an older script) — detect from installed version tag
+    # No branch file (installed by an older script) - detect from installed version tag
     $ver = Get-InstalledVersion
     if ($ver -match "silo") { Save-Branch "silo" }
     elseif (Test-Path $InstallDir) { Save-Branch "matrix" }
@@ -138,7 +138,7 @@ function Get-LatestRelease {
             $r = Invoke-RestMethod "https://api.github.com/repos/YouROK/TorrServer/releases/latest" -Headers $hdr
             return $r.tag_name
         }
-        # MatriX — newest non-prerelease release whose tag starts with "MatriX"
+        # MatriX - newest non-prerelease release whose tag starts with "MatriX"
         $list = Invoke-RestMethod "https://api.github.com/repos/YouROK/TorrServer/releases?per_page=50" -Headers $hdr
         $m = $list | Where-Object { $_.tag_name -match "^MatriX" -and -not $_.prerelease } | Select-Object -First 1
         if ($m) { return $m.tag_name }
@@ -181,7 +181,7 @@ function Get-DiskFreeGB {
 }
 
 # ============================================================
-# CONFIG (port / auth) — Silo: config.yaml, MatriX: task args + accs.db
+# CONFIG (port / auth) - Silo: config.yaml, MatriX: task args + accs.db
 # ============================================================
 
 function Get-TaskArguments {
@@ -316,7 +316,7 @@ function Register-AsTask {
 function Update-TaskConfig {
     param([string]$Port)
     if (-not $Port) { $Port = Get-ServicePort }
-    # Old NSSM service would hold the old args — remove it, Task Scheduler is used now
+    # Old NSSM service would hold the old args - remove it, Task Scheduler is used now
     $nssmCmd = Get-Command nssm -ErrorAction SilentlyContinue
     if ($nssmCmd -and (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
         & nssm.exe remove $ServiceName confirm 2>$null | Out-Null
@@ -518,7 +518,7 @@ function Update-TorrServer {
     Write-Host " Installed: $cur  |  Latest: $latest"
 
     $port = Get-ServicePort
-    # Silo needs config.yaml — migrate from old --port/accs.db setup if missing
+    # Silo needs config.yaml - migrate from old --port/accs.db setup if missing
     if ((Test-Silo) -and -not (Test-Path $ConfigYaml)) {
         $c = Get-AccsCredentials
         $pass = if ($c) { $c.Password } else { "" }
@@ -527,10 +527,10 @@ function Update-TorrServer {
     }
 
     if ($cur -eq $latest) {
-        # Same version, but task args may be from an old script (e.g. Silo started with --port) — repair
+        # Same version, but task args may be from an old script (e.g. Silo started with --port) - repair
         $want = Get-StartArgs -Port $port
         if ((Get-TaskArguments) -ne $want) {
-            Write-Warn "Service start arguments are outdated — fixing"
+            Write-Warn "Service start arguments are outdated - fixing"
             Stop-Torr
             Update-TaskConfig -Port $port
             if (Wait-Running) { Write-Ok "Service restarted with correct arguments" }
@@ -579,7 +579,7 @@ function Switch-Branch {
     Write-Info "Stopping service..."
     Stop-Torr
     if (-not (Download-TorrServer $latest)) {
-        Write-Warn "Download failed — staying on previous branch"
+        Write-Warn "Download failed - staying on previous branch"
         $script:Branch = $old
         Start-Torr; return
     }
@@ -601,7 +601,7 @@ function Switch-Branch {
 
     Update-TaskConfig -Port $port
     if (Wait-Running) {
-        Write-Ok "Switched to $(Get-BranchLabel) — $latest RUNNING"
+        Write-Ok "Switched to $(Get-BranchLabel) - $latest RUNNING"
         Write-Color " Web UI: http://$(Get-LocalIP):$port" "cyan"
     } else {
         Write-Warn "Switched to $latest but service did not start. Check: $LogFile"
@@ -739,7 +739,7 @@ function Set-AutoUpdate {
     Write-Host " Branch is kept: $(Get-BranchLabel)"
     $ans = Read-Host " Enable? (Y/N)"
     if ($ans -notmatch "^[Yy]") { Write-Host " Cancelled"; return }
-    # When launched via "irm | iex" there is no script file — save a local copy for the task
+    # When launched via "irm | iex" there is no script file - save a local copy for the task
     $scriptPath = Join-Path $InstallDir "install.ps1"
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
