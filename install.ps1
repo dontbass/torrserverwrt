@@ -5,14 +5,20 @@
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
 
 $InstallDir  = "C:\TorrServer"
-$ServicePort = 8090
+$DefaultPort = 8090
 $ServiceName = "TorrServer"
 $TaskName    = "TorrServer"
 $BinName     = "TorrServer-windows-amd64.exe"
 $BinPath     = Join-Path $InstallDir $BinName
 $VersionFile = Join-Path $InstallDir "version"
+$BranchFile  = Join-Path $InstallDir "branch"
+$ConfigYaml  = Join-Path $InstallDir "config.yaml"
 $AccsFile    = Join-Path $InstallDir "accs.db"
 $LogFile     = Join-Path $InstallDir "torrserver.log"
+$ScriptUrl   = "https://raw.githubusercontent.com/dontbass/torrserverwrt/main/install.ps1"
+
+# "matrix" (Lampa compatible) or "silo" (new rewrite) — set by Initialize-Branch
+$script:Branch = "matrix"
 
 # Action from command line argument
 $Action = ""
@@ -64,11 +70,16 @@ function Test-Admin {
     return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-# Fix accs.db BOM if present (PS5.1 Set-Content UTF8 adds BOM, Go json fails)
+# PS5.1 Set-Content -Encoding UTF8 adds BOM — Go parsers fail on it. Always write without BOM.
+function Write-NoBom {
+    param([string]$Path, [string]$Text)
+    [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
+}
+
+# Fix accs.db BOM if present (older versions of this script wrote it with BOM)
 function Repair-AccsDb {
     if (-not (Test-Path $AccsFile)) { return }
     $bytes = [System.IO.File]::ReadAllBytes($AccsFile)
-    # UTF-8 BOM = EF BB BF
     if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
         Write-Warn "accs.db has UTF-8 BOM — fixing (this caused auth failure)"
         $noBom = $bytes[3..($bytes.Length - 1)]
@@ -77,12 +88,62 @@ function Repair-AccsDb {
     }
 }
 
+# ============================================================
+# BRANCH (MatriX / Silo)
+# ============================================================
+
+function Save-Branch {
+    param([string]$Name)
+    $script:Branch = $Name
+    if (Test-Path $InstallDir) { Write-NoBom $BranchFile $Name }
+}
+
+function Initialize-Branch {
+    if (Test-Path $BranchFile) {
+        $b = (Get-Content $BranchFile -Raw).Trim().ToLower()
+        if ($b -eq "silo" -or $b -eq "matrix") { $script:Branch = $b; return }
+    }
+    # No branch file (installed by an older script) — detect from installed version tag
+    $ver = Get-InstalledVersion
+    if ($ver -match "silo") { Save-Branch "silo" }
+    elseif (Test-Path $InstallDir) { Save-Branch "matrix" }
+    else { $script:Branch = "matrix" }
+}
+
+function Test-Silo { return ($script:Branch -eq "silo") }
+
+function Get-BranchLabel {
+    if (Test-Silo) { return "Silo (experimental, Lampa NOT supported)" }
+    return "MatriX (Lampa compatible)"
+}
+
+function Select-Branch {
+    Write-Host ""
+    Write-Host " Select TorrServer branch:"
+    Write-Color "  1 - MatriX (recommended, Lampa compatible)" "green"
+    Write-Color "  2 - Silo   (new rewrite, Lampa NOT supported yet)" "yellow"
+    $c = Read-Host " Choice (Enter = 1)"
+    if ($c -eq "2") { Save-Branch "silo";   Write-Ok "Branch: Silo" }
+    else            { Save-Branch "matrix"; Write-Ok "Branch: MatriX" }
+}
+
+# ============================================================
+# VERSIONS
+# ============================================================
+
 function Get-LatestRelease {
+    $hdr = @{ "User-Agent" = "torrserverwrt" }
     try {
-        $r = Invoke-RestMethod "https://api.github.com/repos/YouROK/TorrServer/releases/latest" `
-             -Headers @{ "User-Agent" = "torrserverwrt" }
-        return $r.tag_name
-    } catch { return $null }
+        if (Test-Silo) {
+            $r = Invoke-RestMethod "https://api.github.com/repos/YouROK/TorrServer/releases/latest" -Headers $hdr
+            return $r.tag_name
+        }
+        # MatriX — newest non-prerelease release whose tag starts with "MatriX"
+        $list = Invoke-RestMethod "https://api.github.com/repos/YouROK/TorrServer/releases?per_page=50" -Headers $hdr
+        $m = $list | Where-Object { $_.tag_name -match "^MatriX" -and -not $_.prerelease } | Select-Object -First 1
+        if ($m) { return $m.tag_name }
+    } catch {}
+    return $null
 }
 
 function Get-InstalledVersion {
@@ -99,14 +160,6 @@ function Test-Running {
     if ($svc -and $svc.Status -eq "Running") { return $true }
     $proc = Get-Process -Name ($BinName -replace "\.exe$","") -ErrorAction SilentlyContinue
     return ($null -ne $proc)
-}
-
-function Get-ServicePort {
-    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    if ($task -and $task.Actions[0].Arguments -match "--port (\d+)") { return $Matches[1] }
-    $svc = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
-    if ($svc -and $svc.PathName -match "--port (\d+)") { return $Matches[1] }
-    return "8090"
 }
 
 function Get-LocalIP {
@@ -127,22 +180,117 @@ function Get-DiskFreeGB {
     return 999
 }
 
-function Test-AuthEnabled {
+# ============================================================
+# CONFIG (port / auth) — Silo: config.yaml, MatriX: task args + accs.db
+# ============================================================
+
+function Get-TaskArguments {
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    if ($task -and $task.Actions[0].Arguments -match "--httpauth") { return $true }
+    if ($task) { return [string]$task.Actions[0].Arguments }
     $svc = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
-    if ($svc -and $svc.PathName -match "--httpauth") { return $true }
-    return $false
+    if ($svc) { return [string]$svc.PathName }
+    return ""
 }
 
-function Get-AuthCredentials {
+function Get-YamlPort {
+    if (-not (Test-Path $ConfigYaml)) { return $null }
+    $m = Select-String -Path $ConfigYaml -Pattern "^\s*port:\s*(\d+)" | Select-Object -First 1
+    if ($m) { return $m.Matches[0].Groups[1].Value }
+    return $null
+}
+
+function Get-YamlPassword {
+    if (-not (Test-Path $ConfigYaml)) { return "" }
+    $m = Select-String -Path $ConfigYaml -Pattern "^\s*owner_password:\s*`"?([^`"]*)`"?" | Select-Object -First 1
+    if ($m) { return $m.Matches[0].Groups[1].Value.Trim() }
+    return ""
+}
+
+function Get-ArgsPort {
+    $a = Get-TaskArguments
+    if ($a -match "--port (\d+)") { return $Matches[1] }
+    return $null
+}
+
+function Get-ServicePort {
+    $p = $null
+    if (Test-Silo) { $p = Get-YamlPort }
+    if (-not $p)   { $p = Get-ArgsPort }
+    if (-not $p)   { $p = Get-YamlPort }
+    if (-not $p)   { $p = "$DefaultPort" }
+    return $p
+}
+
+function Get-AccsCredentials {
     if (-not (Test-Path $AccsFile)) { return $null }
     try {
         $json = Get-Content $AccsFile -Raw | ConvertFrom-Json
         $prop = $json.PSObject.Properties | Select-Object -First 1
-        if ($prop) { return @{ Login = $prop.Name; Password = $prop.Value } }
+        if ($prop) { return @{ Login = $prop.Name; Password = [string]$prop.Value } }
     } catch {}
     return $null
+}
+
+function Get-AuthCredentials {
+    if (Test-Silo) {
+        $p = Get-YamlPassword
+        if ($p) { return @{ Login = "owner"; Password = $p } }
+        return $null
+    }
+    return Get-AccsCredentials
+}
+
+function Test-AuthEnabled {
+    if (Test-Silo) { return [bool](Get-YamlPassword) }
+    return ((Test-Path $AccsFile) -and ($null -ne (Get-AccsCredentials)))
+}
+
+function Write-ConfigYaml {
+    param([string]$Port, [string]$OwnerPass = "")
+    $dataDir   = (Join-Path $InstallDir "data")    -replace "\\","/"
+    $pluginDir = (Join-Path $InstallDir "plugins") -replace "\\","/"
+    New-Item -ItemType Directory -Path (Join-Path $InstallDir "data")    -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $InstallDir "plugins") -Force | Out-Null
+    $yaml = @"
+server:
+    host: 0.0.0.0
+    port: $Port
+storage:
+    data_dir: "$dataDir"
+    db_name: torrserver.db
+plugins:
+    dir: "$pluginDir"
+torrent:
+    cache_size_mb: 200
+    peers_limit: 200
+    download_rate_kb: 0
+    upload_rate_kb: 0
+logging:
+    level: info
+    file: ""
+auth:
+    owner_password: "$OwnerPass"
+ffmpeg:
+    enabled: false
+    path: ""
+    probe_path: ""
+"@
+    Write-NoBom $ConfigYaml ($yaml -replace "`r`n","`n")
+}
+
+function Write-AccsDb {
+    param([string]$Login, [string]$Password)
+    if (-not $Login) { $Login = "owner" }
+    Write-NoBom $AccsFile "{`n  `"$Login`": `"$Password`"`n}`n"
+}
+
+# Start arguments for the current branch
+function Get-StartArgs {
+    param([string]$Port)
+    if (Test-Silo) { return "-c `"$ConfigYaml`"" }
+    $a = "--port $Port --path `"$InstallDir`""
+    if (Test-AuthEnabled) { $a += " --httpauth" }
+    return $a
 }
 
 # ============================================================
@@ -151,8 +299,8 @@ function Get-AuthCredentials {
 
 function Register-AsTask {
     param([string]$Arguments)
-    Write-Info "Registering as Scheduled Task (runs as SYSTEM, starts with Windows)..."
-    $action    = New-ScheduledTaskAction -Execute $BinPath -Argument $Arguments
+    Write-Info "Registering Scheduled Task (SYSTEM, starts with Windows)..."
+    $action    = New-ScheduledTaskAction -Execute $BinPath -Argument $Arguments -WorkingDirectory $InstallDir
     $trigger   = New-ScheduledTaskTrigger -AtStartup
     $settings  = New-ScheduledTaskSettingsSet `
                     -RestartCount 3 `
@@ -162,6 +310,18 @@ function Register-AsTask {
     Register-ScheduledTask -TaskName $TaskName -Action $action `
         -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+}
+
+# Re-create task with arguments matching current branch/config, then start
+function Update-TaskConfig {
+    param([string]$Port)
+    if (-not $Port) { $Port = Get-ServicePort }
+    # Old NSSM service would hold the old args — remove it, Task Scheduler is used now
+    $nssmCmd = Get-Command nssm -ErrorAction SilentlyContinue
+    if ($nssmCmd -and (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+        & nssm.exe remove $ServiceName confirm 2>$null | Out-Null
+    }
+    Register-AsTask -Arguments (Get-StartArgs -Port $Port)
 }
 
 function Start-Torr {
@@ -176,8 +336,13 @@ function Stop-Torr {
     if ($task) { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue }
     $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     if ($svc) { Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue }
-    Get-Process -Name ($BinName -replace "\.exe$","") -ErrorAction SilentlyContinue | Stop-Process -Force
-    # Даём время процессу освободить файловые дескрипторы (config.db, accs.db)
+    $procName = $BinName -replace "\.exe$",""
+    Get-Process -Name $procName -ErrorAction SilentlyContinue | Stop-Process -Force
+    # Wait for the process to fully exit so the .exe and DB files are unlocked
+    $waited = 0
+    while ((Get-Process -Name $procName -ErrorAction SilentlyContinue) -and $waited -lt 10) {
+        Start-Sleep -Seconds 1; $waited++
+    }
     Start-Sleep -Milliseconds 500
 }
 
@@ -191,10 +356,19 @@ function Remove-Torr {
 
 function Add-FWRule {
     param([int]$RulePort)
+    Remove-NetFirewallRule -DisplayName "TorrServer" -ErrorAction SilentlyContinue
     New-NetFirewallRule -DisplayName "TorrServer" `
         -Direction Inbound -Protocol TCP -LocalPort $RulePort `
         -Action Allow -ErrorAction SilentlyContinue | Out-Null
-    Write-Info "Firewall rule added for port $RulePort"
+    Write-Info "Firewall rule set for port $RulePort"
+}
+
+function Wait-Running {
+    for ($i = 0; $i -lt 6; $i++) {
+        Start-Sleep -Seconds 1
+        if (Test-Running) { return $true }
+    }
+    return (Test-Running)
 }
 
 # ============================================================
@@ -227,6 +401,7 @@ function Download-TorrServer {
 
     Write-Info "Downloading TorrServer $Version..."
     try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $wc = New-Object System.Net.WebClient
         $wc.DownloadFile($url, $tmpPath)
     } catch {
@@ -243,7 +418,7 @@ function Download-TorrServer {
     }
 
     Move-Item -Path $tmpPath -Destination $BinPath -Force
-    [System.IO.File]::WriteAllText($VersionFile, $Version, [System.Text.UTF8Encoding]::new($false))
+    Write-NoBom $VersionFile $Version
     Write-Ok "Downloaded TorrServer $Version"
     return $true
 }
@@ -265,9 +440,8 @@ function Install-TorrServer {
     Write-Host ""
 
     if (Test-Installed) {
-        $cur = Get-InstalledVersion
-        Write-Warn "Already installed (version: $cur)"
-        $ans = Read-Host " Update to latest? (Y/N)"
+        Write-Warn "Already installed (version: $(Get-InstalledVersion), branch: $(Get-BranchLabel))"
+        $ans = Read-Host " Update to latest $(if (Test-Silo) {'Silo'} else {'MatriX'})? (Y/N)"
         if ($ans -match "^[Yy]") { Update-TorrServer }
         return
     }
@@ -279,6 +453,8 @@ function Install-TorrServer {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
 
+    Select-Branch
+
     Write-Info "Fetching latest version..."
     $latest = Get-LatestRelease
     if (-not $latest) { Write-Err "Could not get version from GitHub"; return }
@@ -287,78 +463,203 @@ function Install-TorrServer {
     if (-not (Download-TorrServer $latest)) { return }
 
     # Port
-    $p = Read-Host " Port (press Enter for default 8090)"
-    if ($p -match "^\d+$" -and [int]$p -ge 1024 -and [int]$p -le 65535) {
-        $ServicePort = [int]$p
-    }
+    $port = "$DefaultPort"
+    $p = Read-Host " Port (press Enter for default $DefaultPort)"
+    if ($p -match "^\d+$" -and [int]$p -ge 1024 -and [int]$p -le 65535) { $port = $p }
 
     # Auth
-    $authArgs = "--port $ServicePort --path `"$InstallDir`""
     $authUser = ""; $authPass = ""
     $ans = Read-Host " Enable HTTP authorization? (Y/N)"
     if ($ans -match "^[Yy]") {
-        $authUser = Read-Host " Username"
+        if (Test-Silo) {
+            $authUser = "owner"   # Silo has a single owner account
+        } else {
+            $authUser = Read-Host " Username (Enter = owner)"
+            if (-not $authUser) { $authUser = "owner" }
+        }
         $authPass = Read-Host " Password"
-        $json = "{`n  `"$authUser`": `"$authPass`"`n}"
-        # PS5.1 Set-Content -Encoding UTF8 adds BOM — Go json.Unmarshal fails with BOM
-        # Use WriteAllText with explicit UTF8 without BOM
-        [System.IO.File]::WriteAllText($AccsFile, $json, [System.Text.UTF8Encoding]::new($false))
-        $authArgs += " --httpauth"
         Write-Ok "Credentials saved"
     }
 
-    Register-AsTask -Arguments $authArgs
+    if (Test-Silo) {
+        Write-ConfigYaml -Port $port -OwnerPass $authPass
+    } elseif ($authPass) {
+        Write-AccsDb -Login $authUser -Password $authPass
+    }
+
+    Update-TaskConfig -Port $port
 
     # Firewall
-    $ans = Read-Host " Add firewall rule for port $ServicePort? (Y/N)"
-    if ($ans -match "^[Yy]") { Add-FWRule -RulePort $ServicePort }
+    $ans = Read-Host " Add firewall rule for port ${port}? (Y/N)"
+    if ($ans -match "^[Yy]") { Add-FWRule -RulePort ([int]$port) }
 
-    Start-Sleep -Seconds 2
+    $ok = Wait-Running
     $ip = Get-LocalIP
 
     Write-Host ""
     Write-Sep
-    if (Test-Running) {
-        Write-Ok "TorrServer $latest installed and RUNNING"
-    } else {
-        Write-Warn "Installed but did not start. Check log: $LogFile"
-    }
+    if ($ok) { Write-Ok "TorrServer $latest installed and RUNNING" }
+    else     { Write-Warn "Installed but did not start. Check log: $LogFile" }
     Write-Sep
-    Write-Color " Web UI:  http://${ip}:${ServicePort}" "cyan"
-    if ($authUser) { Write-Host " Login:   $authUser   Password: $authPass" }
+    Write-Host " Branch:  $(Get-BranchLabel)"
+    Write-Color " Web UI:  http://${ip}:${port}" "cyan"
+    if ($authPass) { Write-Host " Login:   $authUser   Password: $authPass" }
     Write-Host " Log:     $LogFile"
     Write-Host ""
 }
 
 function Update-TorrServer {
     if (-not (Test-Installed)) { Write-Err "TorrServer is not installed"; return }
+    Write-Info "Branch: $(Get-BranchLabel)"
     Write-Info "Fetching latest version..."
     $latest = Get-LatestRelease
     if (-not $latest) { Write-Err "Could not get version"; return }
     $cur = Get-InstalledVersion
     Write-Host " Installed: $cur  |  Latest: $latest"
-    if ($cur -eq $latest) { Write-Ok "Already up to date"; return }
+
+    $port = Get-ServicePort
+    # Silo needs config.yaml — migrate from old --port/accs.db setup if missing
+    if ((Test-Silo) -and -not (Test-Path $ConfigYaml)) {
+        $c = Get-AccsCredentials
+        $pass = if ($c) { $c.Password } else { "" }
+        Write-ConfigYaml -Port $port -OwnerPass $pass
+        Write-Ok "Created config.yaml (port $port)"
+    }
+
+    if ($cur -eq $latest) {
+        # Same version, but task args may be from an old script (e.g. Silo started with --port) — repair
+        $want = Get-StartArgs -Port $port
+        if ((Get-TaskArguments) -ne $want) {
+            Write-Warn "Service start arguments are outdated — fixing"
+            Stop-Torr
+            Update-TaskConfig -Port $port
+            if (Wait-Running) { Write-Ok "Service restarted with correct arguments" }
+            else { Write-Warn "Service did not start. Check: $LogFile" }
+        } else {
+            Write-Ok "Already up to date"
+        }
+        return
+    }
+
     Write-Info "Stopping service..."
     Stop-Torr
-    # Ждём полного завершения процесса, чтобы .exe был доступен для замены
-    $procName = $BinName -replace "\.exe$",""
-    $waited = 0
-    while ((Get-Process -Name $procName -ErrorAction SilentlyContinue) -and $waited -lt 10) {
-        Start-Sleep -Seconds 1; $waited++
-    }
-    if (Get-Process -Name $procName -ErrorAction SilentlyContinue) {
-        Write-Warn "Process did not exit, forcing kill..."
-        Get-Process -Name $procName -ErrorAction SilentlyContinue | Stop-Process -Force
-        Start-Sleep -Seconds 1
-    }
     if (-not (Download-TorrServer $latest)) {
         Write-Warn "Download failed, restarting old version..."
         Start-Torr; return
     }
-    Start-Torr
-    Start-Sleep -Seconds 2
-    if (Test-Running) { Write-Ok "Updated to $latest" }
+    Update-TaskConfig -Port $port
+    if (Wait-Running) { Write-Ok "Updated to $latest" }
     else { Write-Warn "Updated but did not start. Check: $LogFile" }
+}
+
+function Switch-Branch {
+    if (-not (Test-Installed)) { Write-Err "TorrServer is not installed"; return }
+    $old = $script:Branch
+    $new = if ($old -eq "silo") { "matrix" } else { "silo" }
+    Write-Host ""
+    Write-Host " Current branch: $(Get-BranchLabel)"
+    if ($new -eq "silo") {
+        Write-Color " WARNING: switching to Silo. Lampa will NOT work." "yellow"
+    } else {
+        Write-Color " Switching to MatriX. Lampa will work again. config.yaml will be backed up." "yellow"
+    }
+    $ans = Read-Host " Continue? (Y/N)"
+    if ($ans -notmatch "^[Yy]") { Write-Host " Cancelled"; return }
+
+    # Collect current settings before switching
+    $port  = Get-ServicePort
+    $creds = Get-AuthCredentials
+
+    $script:Branch = $new
+    Write-Info "Fetching latest $(if ($new -eq 'silo') {'Silo'} else {'MatriX'}) version..."
+    $latest = Get-LatestRelease
+    if (-not $latest) { Write-Err "Could not get version"; $script:Branch = $old; return }
+    Write-Info "Target version: $latest"
+
+    Write-Info "Stopping service..."
+    Stop-Torr
+    if (-not (Download-TorrServer $latest)) {
+        Write-Warn "Download failed — staying on previous branch"
+        $script:Branch = $old
+        Start-Torr; return
+    }
+    Save-Branch $new
+
+    # Migrate config
+    if ($new -eq "silo") {
+        $pass = if ($creds) { $creds.Password } else { "" }
+        Write-ConfigYaml -Port $port -OwnerPass $pass
+        Write-Ok "config.yaml created (port $port)"
+    } else {
+        if (Test-Path $ConfigYaml) {
+            Move-Item $ConfigYaml "$ConfigYaml.bak" -Force
+            Write-Info "config.yaml backed up to config.yaml.bak"
+        }
+        if ($creds -and $creds.Password) { Write-AccsDb -Login $creds.Login -Password $creds.Password }
+        else { Remove-Item $AccsFile -Force -ErrorAction SilentlyContinue }
+    }
+
+    Update-TaskConfig -Port $port
+    if (Wait-Running) {
+        Write-Ok "Switched to $(Get-BranchLabel) — $latest RUNNING"
+        Write-Color " Web UI: http://$(Get-LocalIP):$port" "cyan"
+    } else {
+        Write-Warn "Switched to $latest but service did not start. Check: $LogFile"
+    }
+}
+
+function Set-Port {
+    if (-not (Test-Installed)) { Write-Err "TorrServer is not installed"; return }
+    $cur = Get-ServicePort
+    Write-Host " Current port: $cur"
+    $p = Read-Host " New port (1024-65535)"
+    if (-not ($p -match "^\d+$" -and [int]$p -ge 1024 -and [int]$p -le 65535)) {
+        Write-Err "Invalid port"; return
+    }
+    if (Test-Silo) {
+        Write-ConfigYaml -Port $p -OwnerPass (Get-YamlPassword)
+    }
+    Stop-Torr
+    Update-TaskConfig -Port $p
+    if (Get-NetFirewallRule -DisplayName "TorrServer" -ErrorAction SilentlyContinue) {
+        Add-FWRule -RulePort ([int]$p)
+    }
+    if (Wait-Running) { Write-Ok "Port changed: http://$(Get-LocalIP):$p" }
+    else { Write-Warn "Service did not start. Check: $LogFile" }
+}
+
+function Set-Auth {
+    if (-not (Test-Installed)) { Write-Err "TorrServer is not installed"; return }
+    $port = Get-ServicePort
+    $c = Get-AuthCredentials
+    if ($c) { Write-Host " Auth: ON (login: $($c.Login))" } else { Write-Host " Auth: OFF" }
+    Write-Host "  1 - set / change password"
+    Write-Host "  2 - disable authorization"
+    $ch = Read-Host " Choice"
+    switch ($ch) {
+        "1" {
+            $login = "owner"
+            if (-not (Test-Silo)) {
+                $login = Read-Host " Username (Enter = owner)"
+                if (-not $login) { $login = "owner" }
+            }
+            $pass = Read-Host " Password"
+            if (-not $pass) { Write-Err "Empty password"; return }
+            if (Test-Silo) { Write-ConfigYaml -Port $port -OwnerPass $pass }
+            else           { Write-AccsDb -Login $login -Password $pass }
+            Write-Ok "Authorization enabled"
+        }
+        "2" {
+            if (Test-Silo) { Write-ConfigYaml -Port $port -OwnerPass "" }
+            else           { Remove-Item $AccsFile -Force -ErrorAction SilentlyContinue }
+            Write-Ok "Authorization disabled"
+        }
+        default { Write-Host " Cancelled"; return }
+    }
+    Stop-Torr
+    Update-TaskConfig -Port $port
+    if (Wait-Running) { Write-Ok "Settings applied" }
+    else { Write-Warn "Service did not start. Check: $LogFile" }
 }
 
 function Show-Status {
@@ -376,6 +677,8 @@ function Show-Status {
     $ip   = Get-LocalIP
     Write-Host " Version:  $ver"
     Write-Host " Binary:   $BinName"
+    if (Test-Silo) { Write-Color " Branch:   $(Get-BranchLabel)" "yellow" }
+    else           { Write-Color " Branch:   $(Get-BranchLabel)" "green"  }
     if (Test-Running) {
         Write-Color " Service:  RUNNING" "green"
         Write-Color " Address:  http://${ip}:${port}" "green"
@@ -433,11 +736,18 @@ function Set-AutoUpdate {
     }
     Write-Host ""
     Write-Host " Auto-update: weekly check (Sunday 04:00), downloads only if new version available"
-    Write-Host " Log: $InstallDir\update.log"
+    Write-Host " Branch is kept: $(Get-BranchLabel)"
     $ans = Read-Host " Enable? (Y/N)"
     if ($ans -notmatch "^[Yy]") { Write-Host " Cancelled"; return }
-    $scriptPath = $MyInvocation.ScriptName
-    if (-not $scriptPath) { $scriptPath = "$InstallDir\install.ps1" }
+    # When launched via "irm | iex" there is no script file — save a local copy for the task
+    $scriptPath = Join-Path $InstallDir "install.ps1"
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        (New-Object System.Net.WebClient).DownloadFile($ScriptUrl, $scriptPath)
+    } catch {
+        if ($PSCommandPath -and (Test-Path $PSCommandPath)) { Copy-Item $PSCommandPath $scriptPath -Force }
+    }
+    if (-not (Test-Path $scriptPath)) { Write-Err "Could not save install.ps1 to $InstallDir"; return }
     $argStr  = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" update"
     $action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $argStr
     $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At "04:00"
@@ -459,24 +769,32 @@ if (-not (Test-Admin)) {
     exit 1
 }
 
+Initialize-Branch
+
 switch ($Action) {
     "install" { Install-TorrServer }
     "update"  { Update-TorrServer  }
     "status"  { Show-Status        }
+    "branch"  { Switch-Branch      }
     "remove"  { Remove-TorrServer  }
     default   {
         Show-Logo
         if (Test-Installed) {
             Write-Host " Version: $(Get-InstalledVersion)"
+            if (Test-Silo) { Write-Color " Branch:  $(Get-BranchLabel)" "yellow" }
+            else           { Write-Color " Branch:  $(Get-BranchLabel)" "green"  }
             if (Test-Running) { Write-Color " Service: RUNNING" "green" }
             else              { Write-Color " Service: STOPPED" "red"   }
         }
         Write-Host ""
-        Write-Color "  [i] install / update" "green"
-        Write-Color "  [s] status"           "cyan"
-        Write-Color "  [c] auto-update"      "cyan"
-        Write-Color "  [d] remove"           "red"
-        Write-Color "  [q] quit"             "yellow"
+        Write-Color "  [i] install / update"              "green"
+        Write-Color "  [s] status"                        "cyan"
+        Write-Color "  [b] switch branch (MatriX <-> Silo)" "blue"
+        Write-Color "  [p] change port"                   "cyan"
+        Write-Color "  [a] authorization"                 "cyan"
+        Write-Color "  [c] auto-update"                   "cyan"
+        Write-Color "  [d] remove"                        "red"
+        Write-Color "  [q] quit"                          "yellow"
         Write-Host ""
         $running = $true
         while ($running) {
@@ -484,10 +802,13 @@ switch ($Action) {
             switch ($choice.ToLower()) {
                 "i" { Install-TorrServer; $running = $false }
                 "s" { Show-Status }
+                "b" { Switch-Branch; $running = $false }
+                "p" { Set-Port; $running = $false }
+                "a" { Set-Auth; $running = $false }
                 "c" { Set-AutoUpdate }
                 "d" { Remove-TorrServer; $running = $false }
                 "q" { $running = $false }
-                default { Write-Host " Enter i, s, c, d or q" }
+                default { Write-Host " Enter i, s, b, p, a, c, d or q" }
             }
         }
     }
